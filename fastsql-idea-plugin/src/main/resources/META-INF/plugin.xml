@@ -7,7 +7,12 @@
     <depends>com.intellij.java</depends>
 
     <extensions defaultExtensionNs="com.intellij">
-        <annotator language="JAVA" implementationClass="com.nicleo.fastsql.idea.FastSqlAnnotator"/>
-        <completion.contributor language="JAVA" implementationClass="com.nicleo.fastsql.idea.FastSqlCompletionContributor"/>
+        <fileType name="FastSqlTemplate" language="FastSqlTemplate" implementationClass="com.nicleo.fastsql.idea.FastSqlTemplateFileType"/>
+        <lang.parserDefinition language="FastSqlTemplate" implementationClass="com.nicleo.fastsql.idea.FastSqlTemplateParserDefinition"/>
+        <lang.syntaxHighlighterFactory language="FastSqlTemplate" implementationClass="com.nicleo.fastsql.idea.FastSqlSyntaxHighlighterFactory"/>
+        <lang.braceMatcher language="FastSqlTemplate" implementationClass="com.nicleo.fastsql.idea.FastSqlBraceMatcher"/>
+        <multiHostInjector implementation="com.nicleo.fastsql.idea.FastSqlTemplateInjector"/>
+        <annotator language="FastSqlTemplate" implementationClass="com.nicleo.fastsql.idea.FastSqlAnnotator"/>
+        <completion.contributor language="FastSqlTemplate" implementationClass="com.nicleo.fastsql.idea.FastSqlCompletionContributor"/>
     </extensions>
 </idea-plugin>

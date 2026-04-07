@@ -12,12 +12,14 @@ final class TemplateContext {
     private final PsiLiteralExpression literal;
     private final int templateOffset;
     private final Kind kind;
+    private final int javaStartOffset;
     private final String javaPrefix;
 
-    private TemplateContext(PsiLiteralExpression literal, int templateOffset, Kind kind, String javaPrefix) {
+    private TemplateContext(PsiLiteralExpression literal, int templateOffset, Kind kind, int javaStartOffset, String javaPrefix) {
         this.literal = literal;
         this.templateOffset = templateOffset;
         this.kind = kind;
+        this.javaStartOffset = javaStartOffset;
         this.javaPrefix = javaPrefix;
     }
 
@@ -29,7 +31,7 @@ final class TemplateContext {
         int exprStart = text.lastIndexOf("${", templateOffset);
         int exprEnd = exprStart >= 0 ? text.indexOf('}', exprStart + 2) : -1;
         if (exprStart >= 0 && exprEnd >= templateOffset) {
-            return new TemplateContext(literal, templateOffset, Kind.JAVA_EXPRESSION, text.substring(exprStart + 2, templateOffset));
+            return new TemplateContext(literal, templateOffset, Kind.JAVA_EXPRESSION, exprStart + 2, text.substring(exprStart + 2, templateOffset));
         }
         int ifStart = text.lastIndexOf("@if", templateOffset);
         int forStart = text.lastIndexOf("@for", templateOffset);
@@ -38,10 +40,10 @@ final class TemplateContext {
             int parenStart = text.indexOf('(', directiveStart);
             int parenEnd = text.indexOf(')', parenStart);
             if (parenStart >= 0 && parenStart < templateOffset && (parenEnd < 0 || parenEnd >= templateOffset)) {
-                return new TemplateContext(literal, templateOffset, Kind.JAVA_STATEMENT_HEADER, text.substring(parenStart + 1, templateOffset));
+                return new TemplateContext(literal, templateOffset, Kind.JAVA_STATEMENT_HEADER, parenStart + 1, text.substring(parenStart + 1, templateOffset));
             }
         }
-        return new TemplateContext(literal, templateOffset, Kind.TEMPLATE, "");
+        return new TemplateContext(literal, templateOffset, Kind.TEMPLATE, -1, "");
     }
 
     PsiLiteralExpression literal() {
@@ -54,6 +56,10 @@ final class TemplateContext {
 
     Kind kind() {
         return kind;
+    }
+
+    int javaStartOffset() {
+        return javaStartOffset;
     }
 
     String javaPrefix() {
