@@ -217,12 +217,12 @@ Implemented:
 
 Working JDK used during this session:
 
-`C:\Users\cui19\.jdks\graalvm-ce-17.0.9`
+`~\.jdks\graalvm-ce-17.0.9`
 
 The machine default `JAVA_HOME` had previously been invalid, so builds were run by explicitly setting:
 
 ```powershell
-$env:JAVA_HOME='C:\Users\cui19\.jdks\graalvm-ce-17.0.9'
+$env:JAVA_HOME='~\.jdks\graalvm-ce-17.0.9'
 $env:Path="$env:JAVA_HOME\bin;$env:Path"
 ```
 
