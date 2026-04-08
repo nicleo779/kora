@@ -5,8 +5,8 @@ pluginManagement {
     }
 }
 
-rootProject.name = "fastSQL"
+rootProject.name = "kora"
 
-include("fastsql-core")
-include("fastsql-compiler")
-include("fastsql-idea-plugin")
+include("kora-core")
+include("kora-processor")
+include("simple")

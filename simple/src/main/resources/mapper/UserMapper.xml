@@ -1,0 +1,40 @@
+<mapper namespace="com.example.simple.mapper.UserMapper">
+    <select id="selectById">
+        select id, name, age
+        from users
+        where id = #{id}
+    </select>
+
+    <select id="selectByAgeRange">
+        select id, name, age
+        from users
+        <where>
+            <if test="minAge != null">
+                age <![CDATA[ >= ]]> #{minAge}
+            </if>
+            <if test="maxAge != null">
+                and age <![CDATA[ <= ]]> #{maxAge}
+            </if>
+        </where>
+        order by id
+    </select>
+
+    <select id="selectByIds">
+        select id, name, age
+        from users
+        <where>
+            <if test="ids != null">
+                id in
+                <foreach collection="ids" item="id" open="(" close=")" separator=", ">
+                    #{id}
+                </foreach>
+            </if>
+        </where>
+        order by id
+    </select>
+
+    <insert id="insert">
+        insert into users(name, age)
+        values(#{user.name}, #{user.age})
+    </insert>
+</mapper>
