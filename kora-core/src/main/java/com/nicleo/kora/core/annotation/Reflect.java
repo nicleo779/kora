@@ -9,4 +9,8 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.SOURCE)
 public @interface Reflect {
     String suffix() default "GeneratedReflector";
+
+    ReflectMetadataLevel metadata() default ReflectMetadataLevel.FIELDS;
+
+    boolean annotationMetadata() default false;
 }

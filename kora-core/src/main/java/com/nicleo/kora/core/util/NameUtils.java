@@ -22,4 +22,27 @@ public final class NameUtils {
         }
         return builder.toString();
     }
+
+    public static String snakeToCamel(String input) {
+        if (input == null || input.isEmpty()) {
+            return input;
+        }
+        StringBuilder builder = new StringBuilder(input.length());
+        boolean upperNext = false;
+        for (int i = 0; i < input.length(); i++) {
+            char current = input.charAt(i);
+            if (current == '_') {
+                upperNext = true;
+                continue;
+            }
+            char normalized = Character.toLowerCase(current);
+            if (upperNext) {
+                builder.append(Character.toUpperCase(normalized));
+                upperNext = false;
+            } else {
+                builder.append(normalized);
+            }
+        }
+        return builder.toString();
+    }
 }

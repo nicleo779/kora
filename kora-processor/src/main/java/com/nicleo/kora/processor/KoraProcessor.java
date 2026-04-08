@@ -2,6 +2,7 @@ package com.nicleo.kora.processor;
 
 import com.nicleo.kora.core.annotation.KoraScan;
 import com.nicleo.kora.core.annotation.Reflect;
+import com.nicleo.kora.core.annotation.ReflectMetadataLevel;
 import com.nicleo.kora.core.dynamic.BindSqlNode;
 import com.nicleo.kora.core.dynamic.ChooseSqlNode;
 import com.nicleo.kora.core.dynamic.DynamicSqlNode;
@@ -29,14 +30,18 @@ import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.AnnotationMirror;
+import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.ArrayType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 import java.io.IOException;
@@ -45,6 +50,7 @@ import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -68,6 +74,7 @@ public class KoraProcessor extends AbstractProcessor {
     private Filer filer;
     private Messager messager;
     private Elements elements;
+    private Types types;
     private String projectDir;
 
     private final Map<String, ReflectSpec> reflectSpecs = new LinkedHashMap<>();
@@ -83,6 +90,7 @@ public class KoraProcessor extends AbstractProcessor {
         this.filer = processingEnv.getFiler();
         this.messager = processingEnv.getMessager();
         this.elements = processingEnv.getElementUtils();
+        this.types = processingEnv.getTypeUtils();
         this.projectDir = processingEnv.getOptions().getOrDefault("kora.projectDir", System.getProperty("user.dir", "."));
     }
 
@@ -106,7 +114,7 @@ public class KoraProcessor extends AbstractProcessor {
             }
             TypeElement typeElement = (TypeElement) element;
             Reflect reflect = typeElement.getAnnotation(Reflect.class);
-            reflectSpecs.put(typeElement.getQualifiedName().toString(), new ReflectSpec(typeElement, reflect.suffix()));
+            reflectSpecs.put(typeElement.getQualifiedName().toString(), new ReflectSpec(typeElement, reflect.suffix(), reflect.metadata(), reflect.annotationMetadata()));
         }
     }
 
@@ -307,6 +315,13 @@ public class KoraProcessor extends AbstractProcessor {
 
     private String buildReflectorSource(String packageName, String generatedSimpleName, TypeElement entityType) {
         String entityTypeName = entityType.getQualifiedName().toString();
+        List<VariableElement> fields = collectInstanceFields(entityType);
+        List<ExecutableElement> methods = collectInvokableMethods(entityType);
+        ReflectSpec reflectSpec = reflectSpecs.get(entityType.getQualifiedName().toString());
+        ReflectMetadataLevel metadataLevel = reflectSpec == null ? ReflectMetadataLevel.FIELDS : reflectSpec.metadataLevel;
+        boolean includeFieldsMetadata = metadataLevel.includesFields();
+        boolean includeMethodsMetadata = metadataLevel.includesMethods();
+        boolean includeAnnotationMetadata = reflectSpec != null && reflectSpec.annotationMetadata;
         StringBuilder source = new StringBuilder();
         if (!packageName.isEmpty()) {
             source.append("package ").append(packageName).append(";\n\n");
@@ -314,6 +329,52 @@ public class KoraProcessor extends AbstractProcessor {
         source.append("public final class ").append(generatedSimpleName)
                 .append(" implements com.nicleo.kora.core.runtime.GeneratedReflector<")
                 .append(entityTypeName).append("> {\n");
+        if (includeFieldsMetadata) {
+            source.append("    private static volatile com.nicleo.kora.core.runtime.FieldInfo[] fields;\n\n");
+        }
+        if (includeMethodsMetadata) {
+            source.append("    private static volatile com.nicleo.kora.core.runtime.MethodInfo[] methods;\n\n");
+        }
+        if (includeFieldsMetadata) {
+            source.append("    private static com.nicleo.kora.core.runtime.FieldInfo[] initFields() {\n")
+                    .append("        com.nicleo.kora.core.runtime.FieldInfo[] local = fields;\n")
+                    .append("        if (local == null) {\n")
+                    .append("            synchronized (").append(generatedSimpleName).append(".class) {\n")
+                    .append("                local = fields;\n")
+                    .append("                if (local == null) {\n")
+                    .append("                    local = new com.nicleo.kora.core.runtime.FieldInfo[]{\n");
+            for (int i = 0; i < fields.size(); i++) {
+                source.append(buildFieldInfoEntry(entityType, fields.get(i), includeAnnotationMetadata));
+                source.append(i + 1 == fields.size() ? '\n' : ",\n");
+            }
+            source.append("                    };\n")
+                    .append("                    fields = local;\n")
+                    .append("                }\n")
+                    .append("            }\n")
+                    .append("        }\n")
+                    .append("        return local;\n")
+                    .append("    }\n\n");
+        }
+        if (includeMethodsMetadata) {
+            source.append("    private static com.nicleo.kora.core.runtime.MethodInfo[] initMethods() {\n")
+                    .append("        com.nicleo.kora.core.runtime.MethodInfo[] local = methods;\n")
+                    .append("        if (local == null) {\n")
+                    .append("            synchronized (").append(generatedSimpleName).append(".class) {\n")
+                    .append("                local = methods;\n")
+                    .append("                if (local == null) {\n")
+                    .append("                    local = new com.nicleo.kora.core.runtime.MethodInfo[]{\n");
+            for (int i = 0; i < methods.size(); i++) {
+                source.append(buildMethodInfoEntry(entityType, methods.get(i), includeAnnotationMetadata));
+                source.append(i + 1 == methods.size() ? '\n' : ",\n");
+            }
+            source.append("                    };\n")
+                    .append("                    methods = local;\n")
+                    .append("                }\n")
+                    .append("            }\n")
+                    .append("        }\n")
+                    .append("        return local;\n")
+                    .append("    }\n\n");
+        }
         source.append("    @Override\n    public ").append(entityTypeName).append(" newInstance() {\n")
                 .append("        return new ").append(entityType.getSimpleName()).append("();\n    }\n\n");
         source.append("    @Override\n    public Object invoke(").append(entityTypeName).append(" target, String method, Object[] args) {\n")
@@ -321,26 +382,273 @@ public class KoraProcessor extends AbstractProcessor {
                 .append("            throw new java.lang.IllegalArgumentException(\"method must not be null\");\n")
                 .append("        }\n")
                 .append("        switch (method) {\n");
-        for (ExecutableElement method : collectInvokableMethods(entityType)) {
+        for (ExecutableElement method : methods) {
             source.append(buildInvokeCase(method));
         }
         source.append("            default:\n")
                 .append("                throw new java.lang.IllegalArgumentException(\"Unknown method: \" + method);\n")
                 .append("        }\n    }\n\n");
         source.append("    @Override\n    public void set(").append(entityTypeName).append(" target, String property, Object value) {\n")
-                .append("        switch (com.nicleo.kora.core.runtime.TypeConverter.normalize(property)) {\n");
-        for (VariableElement field : collectInstanceFields(entityType)) {
+                .append("        switch (property) {\n");
+        for (VariableElement field : fields) {
             source.append(buildSetCase(entityType, field));
         }
         source.append("            default:\n                return;\n        }\n    }\n\n");
         source.append("    @Override\n    public Object get(").append(entityTypeName).append(" target, String property) {\n")
-                .append("        switch (com.nicleo.kora.core.runtime.TypeConverter.normalize(property)) {\n");
-        for (VariableElement field : collectInstanceFields(entityType)) {
+                .append("        switch (property) {\n");
+        for (VariableElement field : fields) {
             source.append(buildGetCase(entityType, field));
         }
         source.append("            default:\n                throw new java.lang.IllegalArgumentException(\"Unknown property: \" + property);\n")
-                .append("        }\n    }\n}\n");
+                .append("        }\n    }\n\n");
+        source.append("    @Override\n    public com.nicleo.kora.core.runtime.FieldInfo[] getFields() {\n")
+                .append(includeFieldsMetadata
+                        ? "        return initFields().clone();\n"
+                        : "        return new com.nicleo.kora.core.runtime.FieldInfo[0];\n")
+                .append("    }\n\n");
+        source.append("    @Override\n    public com.nicleo.kora.core.runtime.FieldInfo getField(String field) {\n")
+                .append(includeFieldsMetadata
+                        ? "        for (com.nicleo.kora.core.runtime.FieldInfo candidate : initFields()) {\n"
+                        : "        return null;\n")
+                .append(includeFieldsMetadata
+                        ? "            if (candidate.name().equals(field)) {\n" +
+                          "                return candidate;\n" +
+                          "            }\n" +
+                          "        }\n" +
+                          "        return null;\n"
+                        : "")
+                .append("    }\n\n");
+        source.append("    @Override\n    public com.nicleo.kora.core.runtime.MethodInfo[] getMethods() {\n")
+                .append(includeMethodsMetadata
+                        ? "        return initMethods().clone();\n"
+                        : "        return new com.nicleo.kora.core.runtime.MethodInfo[0];\n")
+                .append("    }\n\n");
+        source.append("    @Override\n    public com.nicleo.kora.core.runtime.MethodInfo[] getMethod(String name) {\n")
+                .append(includeMethodsMetadata
+                        ? "        java.util.List<com.nicleo.kora.core.runtime.MethodInfo> matches = new java.util.ArrayList<>();\n" +
+                          "        for (com.nicleo.kora.core.runtime.MethodInfo candidate : initMethods()) {\n" +
+                          "            if (candidate.name().equals(name)) {\n" +
+                          "                matches.add(candidate);\n" +
+                          "            }\n" +
+                          "        }\n" +
+                          "        return matches.toArray(new com.nicleo.kora.core.runtime.MethodInfo[0]);\n"
+                        : "        return new com.nicleo.kora.core.runtime.MethodInfo[0];\n")
+                .append("    }\n}\n");
         return source.toString();
+    }
+
+    private String buildFieldInfoEntry(TypeElement entityType, VariableElement field, boolean includeAnnotationMetadata) {
+        String fieldName = field.getSimpleName().toString();
+        ExecutableElement getter = findMethod(entityType, "get" + capitalize(fieldName), 0);
+        ExecutableElement booleanGetter = findMethod(entityType, "is" + capitalize(fieldName), 0);
+        ExecutableElement setter = findMethod(entityType, "set" + capitalize(fieldName), 1);
+        String getterName = getter != null ? getter.getSimpleName().toString()
+                : booleanGetter != null ? booleanGetter.getSimpleName().toString()
+                : null;
+        String setterName = setter != null ? setter.getSimpleName().toString() : null;
+        return "        new com.nicleo.kora.core.runtime.FieldInfo(\"" + fieldName + "\", "
+                + renderTypeLiteral(field.asType()) + ", "
+                + modifierMask(field.getModifiers()) + ", "
+                + renderNullableString(getterName) + ", "
+                + renderNullableString(setterName) + ", "
+                + renderAnnotationArray(field.getAnnotationMirrors(), includeAnnotationMetadata) + ")";
+    }
+
+    private String buildMethodInfoEntry(TypeElement entityType, ExecutableElement method, boolean includeAnnotationMetadata) {
+        String methodName = method.getSimpleName().toString();
+        return "        new com.nicleo.kora.core.runtime.MethodInfo(\"" + methodName + "\", "
+                + renderTypeLiteral(method.getReturnType()) + ", "
+                + modifierMask(method.getModifiers()) + ", "
+                + renderParameterInfoArray(method, includeAnnotationMetadata) + ", "
+                + renderAnnotationArray(method.getAnnotationMirrors(), includeAnnotationMetadata) + ")";
+    }
+
+    private String renderParameterInfoArray(ExecutableElement method, boolean includeAnnotationMetadata) {
+        List<? extends VariableElement> parameters = method.getParameters();
+        StringBuilder builder = new StringBuilder("new com.nicleo.kora.core.runtime.ParameterInfo[]{");
+        for (int i = 0; i < parameters.size(); i++) {
+            if (i > 0) {
+                builder.append(", ");
+            }
+            VariableElement parameter = parameters.get(i);
+            builder.append("new com.nicleo.kora.core.runtime.ParameterInfo(\"")
+                    .append(parameter.getSimpleName()).append("\", ")
+                    .append(renderTypeLiteral(parameter.asType())).append(", ")
+                    .append(renderAnnotationArray(parameter.getAnnotationMirrors(), includeAnnotationMetadata)).append(")");
+        }
+        builder.append('}');
+        return builder.toString();
+    }
+
+    private String renderTypeLiteral(TypeMirror typeMirror) {
+        return classLiteral(typeMirror);
+    }
+
+    private String classLiteral(TypeMirror typeMirror) {
+        TypeMirror erasedType = types.erasure(typeMirror);
+        return switch (erasedType.getKind()) {
+            case BOOLEAN -> "boolean.class";
+            case BYTE -> "byte.class";
+            case SHORT -> "short.class";
+            case INT -> "int.class";
+            case LONG -> "long.class";
+            case CHAR -> "char.class";
+            case FLOAT -> "float.class";
+            case DOUBLE -> "double.class";
+            case ARRAY -> erasedType + ".class";
+            case TYPEVAR -> "java.lang.Object.class";
+            default -> erasedType + ".class";
+        };
+    }
+
+    private int modifierMask(Set<Modifier> modifiers) {
+        int value = 0;
+        if (modifiers.contains(Modifier.PUBLIC)) value |= java.lang.reflect.Modifier.PUBLIC;
+        if (modifiers.contains(Modifier.PROTECTED)) value |= java.lang.reflect.Modifier.PROTECTED;
+        if (modifiers.contains(Modifier.PRIVATE)) value |= java.lang.reflect.Modifier.PRIVATE;
+        if (modifiers.contains(Modifier.ABSTRACT)) value |= java.lang.reflect.Modifier.ABSTRACT;
+        if (modifiers.contains(Modifier.STATIC)) value |= java.lang.reflect.Modifier.STATIC;
+        if (modifiers.contains(Modifier.FINAL)) value |= java.lang.reflect.Modifier.FINAL;
+        if (modifiers.contains(Modifier.TRANSIENT)) value |= java.lang.reflect.Modifier.TRANSIENT;
+        if (modifiers.contains(Modifier.VOLATILE)) value |= java.lang.reflect.Modifier.VOLATILE;
+        if (modifiers.contains(Modifier.SYNCHRONIZED)) value |= java.lang.reflect.Modifier.SYNCHRONIZED;
+        if (modifiers.contains(Modifier.NATIVE)) value |= java.lang.reflect.Modifier.NATIVE;
+        if (modifiers.contains(Modifier.STRICTFP)) value |= java.lang.reflect.Modifier.STRICT;
+        return value;
+    }
+
+    private String renderAnnotationArray(List<? extends AnnotationMirror> annotations, boolean includeAnnotationMetadata) {
+        if (!includeAnnotationMetadata) {
+            return "new java.lang.annotation.Annotation[0]";
+        }
+        List<? extends AnnotationMirror> runtimeAnnotations = annotations.stream()
+                .filter(this::isRuntimeVisibleAnnotation)
+                .toList();
+        if (runtimeAnnotations.isEmpty()) {
+            return "new java.lang.annotation.Annotation[0]";
+        }
+        StringBuilder builder = new StringBuilder("new java.lang.annotation.Annotation[]{");
+        for (int i = 0; i < runtimeAnnotations.size(); i++) {
+            if (i > 0) {
+                builder.append(", ");
+            }
+            builder.append(renderAnnotationLiteral(runtimeAnnotations.get(i)));
+        }
+        builder.append('}');
+        return builder.toString();
+    }
+
+    private boolean isRuntimeVisibleAnnotation(AnnotationMirror annotationMirror) {
+        Element element = annotationMirror.getAnnotationType().asElement();
+        if (!(element instanceof TypeElement annotationType)) {
+            return false;
+        }
+        for (AnnotationMirror meta : annotationType.getAnnotationMirrors()) {
+            if (!meta.getAnnotationType().toString().equals("java.lang.annotation.Retention")) {
+                continue;
+            }
+            for (AnnotationValue value : meta.getElementValues().values()) {
+                Object raw = value.getValue();
+                if (raw instanceof VariableElement retentionValue) {
+                    return retentionValue.getSimpleName().contentEquals(RetentionPolicy.RUNTIME.name());
+                }
+            }
+        }
+        return false;
+    }
+
+    private String renderAnnotationLiteral(AnnotationMirror annotationMirror) {
+        TypeElement annotationType = (TypeElement) annotationMirror.getAnnotationType().asElement();
+        String annotationTypeName = annotationType.getQualifiedName().toString();
+        StringBuilder builder = new StringBuilder("new ").append(annotationTypeName).append("() {\n");
+        builder.append("            @Override\n")
+                .append("            public Class<? extends java.lang.annotation.Annotation> annotationType() {\n")
+                .append("                return ").append(annotationTypeName).append(".class;\n")
+                .append("            }\n");
+        for (Element enclosed : annotationType.getEnclosedElements()) {
+            if (enclosed.getKind() != ElementKind.METHOD) {
+                continue;
+            }
+            ExecutableElement method = (ExecutableElement) enclosed;
+            AnnotationValue value = annotationValue(annotationMirror, method);
+            builder.append("            @Override\n")
+                    .append("            public ").append(method.getReturnType()).append(' ')
+                    .append(method.getSimpleName()).append("() {\n")
+                    .append("                return ").append(renderAnnotationValue(value, method.getReturnType())).append(";\n")
+                    .append("            }\n");
+        }
+        builder.append("        }");
+        return builder.toString();
+    }
+
+    private AnnotationValue annotationValue(AnnotationMirror annotationMirror, ExecutableElement method) {
+        AnnotationValue value = annotationMirror.getElementValues().get(method);
+        if (value != null) {
+            return value;
+        }
+        AnnotationValue defaultValue = method.getDefaultValue();
+        if (defaultValue == null) {
+            throw new ProcessorException("Missing annotation value for " + method.getSimpleName() + " on " + annotationMirror);
+        }
+        return defaultValue;
+    }
+
+    private String renderAnnotationValue(AnnotationValue value, TypeMirror expectedType) {
+        Object raw = value.getValue();
+        return switch (expectedType.getKind()) {
+            case BOOLEAN, BYTE, SHORT, INT, LONG, CHAR, FLOAT, DOUBLE -> String.valueOf(raw);
+            case ARRAY -> renderAnnotationArrayValue((List<? extends AnnotationValue>) raw, (ArrayType) expectedType);
+            case DECLARED -> renderDeclaredAnnotationValue(raw, expectedType);
+            default -> raw == null ? "null" : String.valueOf(raw);
+        };
+    }
+
+    private String renderAnnotationArrayValue(List<? extends AnnotationValue> values, ArrayType arrayType) {
+        StringBuilder builder = new StringBuilder("new ").append(classLiteral(arrayType.getComponentType()).replace(".class", "")).append("[]{");
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) {
+                builder.append(", ");
+            }
+            builder.append(renderAnnotationValue(values.get(i), arrayType.getComponentType()));
+        }
+        builder.append('}');
+        return builder.toString();
+    }
+
+    private String renderDeclaredAnnotationValue(Object raw, TypeMirror expectedType) {
+        if (raw instanceof String stringValue) {
+            return "\"" + escapeJava(stringValue) + "\"";
+        }
+        if (raw instanceof TypeMirror typeMirror) {
+            return classLiteral(typeMirror);
+        }
+        if (raw instanceof VariableElement enumConstant) {
+            TypeElement owner = (TypeElement) enumConstant.getEnclosingElement();
+            return owner.getQualifiedName() + "." + enumConstant.getSimpleName();
+        }
+        if (raw instanceof AnnotationMirror annotationMirror) {
+            return renderAnnotationLiteral(annotationMirror);
+        }
+        return types.erasure(expectedType) + ".class.cast(" + renderObjectLiteral(raw) + ")";
+    }
+
+    private String renderObjectLiteral(Object raw) {
+        if (raw instanceof String stringValue) {
+            return "\"" + escapeJava(stringValue) + "\"";
+        }
+        if (raw instanceof Character charValue) {
+            return "'" + escapeJava(String.valueOf(charValue)) + "'";
+        }
+        if (raw instanceof Long) {
+            return raw + "L";
+        }
+        if (raw instanceof Float) {
+            return raw + "F";
+        }
+        if (raw instanceof Double) {
+            return raw + "D";
+        }
+        return String.valueOf(raw);
     }
 
     private String buildSupportSource(ScanSpec scanSpec) {
@@ -427,6 +735,13 @@ public class KoraProcessor extends AbstractProcessor {
                 .append(renderParameterNames(method)).append(", ").append(renderParameterValues(method)).append(");\n")
                 .append("        com.nicleo.kora.core.runtime.BoundSql boundSql = com.nicleo.kora.core.dynamic.DynamicSqlRenderer.render(")
                 .append(statementFieldName(statement.id())).append(", params);\n")
+                .append("        com.nicleo.kora.core.runtime.SqlExecutionContext context = new com.nicleo.kora.core.runtime.SqlExecutionContext(")
+                .append("sqlSession, ")
+                .append('"').append(mapperType.getQualifiedName()).append('"').append(", ")
+                .append('"').append(method.getSimpleName()).append('"').append(", ")
+                .append('"').append(statement.id()).append('"').append(", ")
+                .append("com.nicleo.kora.core.xml.SqlCommandType.").append(statement.commandType().name()).append(", ")
+                .append(renderResultTypeLiteral(method, statement)).append(", true);\n")
                 .append("        String sql = boundSql.getSql();\n")
                 .append("        Object[] args = com.nicleo.kora.core.dynamic.DynamicSqlArgumentResolver.resolve(boundSql);\n")
                 .append(renderExecution(mapperType, method, statement))
@@ -480,7 +795,7 @@ public class KoraProcessor extends AbstractProcessor {
             if (isListReturn(returnType)) {
                 String elementType = extractListElementType(returnType);
                 reflectSpecFor(typeElementOf(elementType));
-                return "        return sqlSession.selectList(sql, args, " + elementType + ".class);\n";
+                return "        return sqlSession.selectList(sql, args, context, " + elementType + ".class);\n";
             }
             if (returnType.getKind() == TypeKind.VOID) {
                 throw new ProcessorException("Select method cannot return void: " + mapperType.getQualifiedName() + "." + method.getSimpleName());
@@ -489,15 +804,26 @@ public class KoraProcessor extends AbstractProcessor {
                 throw new ProcessorException("Select method must return an entity or List<entity>, not primitive: " + mapperType.getQualifiedName() + "." + method.getSimpleName());
             }
             reflectSpecFor(asTypeElement(returnType));
-            return "        return sqlSession.selectOne(sql, args, " + returnType + ".class);\n";
+            return "        return sqlSession.selectOne(sql, args, context, " + returnType + ".class);\n";
         }
         if (returnType.getKind() == TypeKind.INT) {
-            return "        return sqlSession.update(sql, args);\n";
+            return "        return sqlSession.update(sql, args, context);\n";
         }
         if (returnType.getKind() == TypeKind.VOID) {
-            return "        sqlSession.update(sql, args);\n        return;\n";
+            return "        sqlSession.update(sql, args, context);\n        return;\n";
         }
         throw new ProcessorException("Non-select method must return int or void: " + mapperType.getQualifiedName() + "." + method.getSimpleName());
+    }
+
+    private String renderResultTypeLiteral(ExecutableElement method, SqlNodeDefinition statement) {
+        if (statement.commandType() != SqlCommandType.SELECT) {
+            return "null";
+        }
+        TypeMirror returnType = method.getReturnType();
+        if (isListReturn(returnType)) {
+            return extractListElementType(returnType) + ".class";
+        }
+        return returnType + ".class";
     }
 
     private boolean isListReturn(TypeMirror returnType) {
@@ -601,27 +927,22 @@ public class KoraProcessor extends AbstractProcessor {
             }
             VariableElement parameter = parameters.get(i);
             source.append("(").append(boxedType(parameter.asType().toString())).append(") ")
-                    .append("com.nicleo.kora.core.runtime.TypeConverter.cast(args[").append(i).append("], ")
-                    .append(boxedType(parameter.asType().toString())).append(".class)");
+                    .append("args[").append(i).append("]");
         }
         return source.toString();
     }
 
     private String buildSetCase(TypeElement entityType, VariableElement field) {
         String fieldName = field.getSimpleName().toString();
-        String normalized = NameUtils.camelToSnake(fieldName).replace("_", "").toLowerCase();
         ExecutableElement setter = findMethod(entityType, "set" + capitalize(fieldName), 1);
         String fieldType = boxedType(field.asType().toString());
         StringBuilder source = new StringBuilder();
-        source.append("            case \"").append(normalized).append("\":\n");
+        source.append("            case \"").append(fieldName).append("\":\n");
         if (setter != null) {
-            source.append("                target.").append(setter.getSimpleName()).append("((")
-                    .append(fieldType).append(") com.nicleo.kora.core.runtime.TypeConverter.cast(value, ")
-                    .append(fieldType).append(".class));\n");
+            source.append("                invoke(target, \"").append(setter.getSimpleName()).append("\", new Object[]{value});\n");
         } else if (!field.getModifiers().contains(Modifier.PRIVATE)) {
             source.append("                target.").append(fieldName).append(" = (")
-                    .append(fieldType).append(") com.nicleo.kora.core.runtime.TypeConverter.cast(value, ")
-                    .append(fieldType).append(".class);\n");
+                    .append(fieldType).append(") value;\n");
         } else {
             messager.printMessage(Diagnostic.Kind.ERROR, "@Reflect field requires setter or non-private access: " + entityType.getQualifiedName() + "." + fieldName, field);
             source.append("                return;\n");
@@ -633,15 +954,14 @@ public class KoraProcessor extends AbstractProcessor {
 
     private String buildGetCase(TypeElement entityType, VariableElement field) {
         String fieldName = field.getSimpleName().toString();
-        String normalized = NameUtils.camelToSnake(fieldName).replace("_", "").toLowerCase();
         ExecutableElement getter = findMethod(entityType, "get" + capitalize(fieldName), 0);
         ExecutableElement booleanGetter = findMethod(entityType, "is" + capitalize(fieldName), 0);
         StringBuilder source = new StringBuilder();
-        source.append("            case \"").append(normalized).append("\":\n");
+        source.append("            case \"").append(fieldName).append("\":\n");
         if (getter != null) {
-            source.append("                return target.").append(getter.getSimpleName()).append("();\n");
+            source.append("                return invoke(target, \"").append(getter.getSimpleName()).append("\", new Object[0]);\n");
         } else if (booleanGetter != null) {
-            source.append("                return target.").append(booleanGetter.getSimpleName()).append("();\n");
+            source.append("                return invoke(target, \"").append(booleanGetter.getSimpleName()).append("\", new Object[0]);\n");
         } else if (!field.getModifiers().contains(Modifier.PRIVATE)) {
             source.append("                return target.").append(fieldName).append(";\n");
         } else {
@@ -764,10 +1084,14 @@ public class KoraProcessor extends AbstractProcessor {
     private static final class ReflectSpec {
         private final TypeElement typeElement;
         private final String suffix;
+        private final ReflectMetadataLevel metadataLevel;
+        private final boolean annotationMetadata;
 
-        private ReflectSpec(TypeElement typeElement, String suffix) {
+        private ReflectSpec(TypeElement typeElement, String suffix, ReflectMetadataLevel metadataLevel, boolean annotationMetadata) {
             this.typeElement = typeElement;
             this.suffix = suffix;
+            this.metadataLevel = metadataLevel;
+            this.annotationMetadata = annotationMetadata;
         }
     }
 

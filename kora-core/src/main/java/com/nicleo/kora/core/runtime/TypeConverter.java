@@ -1,42 +1,56 @@
 package com.nicleo.kora.core.runtime;
 
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+
 public final class TypeConverter {
+    private static final List<RegisteredConverter<?>> CUSTOM_CONVERTERS = new CopyOnWriteArrayList<>();
+
     private TypeConverter() {
     }
 
-    public static String normalize(String name) {
-        return name == null ? "" : name.replace("_", "").toLowerCase();
+    public static <T> void register(Class<T> targetType, CustomTypeConverter<? extends T> converter) {
+        CUSTOM_CONVERTERS.add(registeredConverter(targetType, converter));
+    }
+
+    public static void clearCustomConverters() {
+        CUSTOM_CONVERTERS.clear();
     }
 
     public static Object cast(Object value, Class<?> targetType) {
+        Class<?> normalizedTargetType = wrap(targetType);
         if (value == null) {
-            if (targetType.isPrimitive()) {
+            if (normalizedTargetType != targetType || targetType.isPrimitive()) {
                 throw new SqlSessionException("Cannot assign null to primitive type " + targetType.getName());
             }
             return null;
         }
-        if (targetType.isInstance(value)) {
+        if (normalizedTargetType.isInstance(value)) {
             return value;
         }
-        if (targetType == int.class || targetType == Integer.class) {
+        Object converted = applyCustomConverters(value, normalizedTargetType);
+        if (converted != null) {
+            return converted;
+        }
+        if (normalizedTargetType == Integer.class) {
             return ((Number) value).intValue();
         }
-        if (targetType == long.class || targetType == Long.class) {
+        if (normalizedTargetType == Long.class) {
             return ((Number) value).longValue();
         }
-        if (targetType == double.class || targetType == Double.class) {
+        if (normalizedTargetType == Double.class) {
             return ((Number) value).doubleValue();
         }
-        if (targetType == float.class || targetType == Float.class) {
+        if (normalizedTargetType == Float.class) {
             return ((Number) value).floatValue();
         }
-        if (targetType == short.class || targetType == Short.class) {
+        if (normalizedTargetType == Short.class) {
             return ((Number) value).shortValue();
         }
-        if (targetType == byte.class || targetType == Byte.class) {
+        if (normalizedTargetType == Byte.class) {
             return ((Number) value).byteValue();
         }
-        if (targetType == boolean.class || targetType == Boolean.class) {
+        if (normalizedTargetType == Boolean.class) {
             if (value instanceof Boolean booleanValue) {
                 return booleanValue;
             }
@@ -44,9 +58,58 @@ public final class TypeConverter {
                 return number.intValue() != 0;
             }
         }
-        if (targetType == String.class) {
+        if (normalizedTargetType == String.class) {
             return String.valueOf(value);
         }
-        return targetType.cast(value);
+        return normalizedTargetType.cast(value);
+    }
+
+    private static Object applyCustomConverters(Object value, Class<?> targetType) {
+        for (RegisteredConverter<?> registeredConverter : CUSTOM_CONVERTERS) {
+            if (registeredConverter.supports(targetType)) {
+                return registeredConverter.convert(value);
+            }
+        }
+        return null;
+    }
+
+    private static Class<?> wrap(Class<?> type) {
+        if (!type.isPrimitive()) {
+            return type;
+        }
+        return switch (type.getName()) {
+            case "boolean" -> Boolean.class;
+            case "byte" -> Byte.class;
+            case "short" -> Short.class;
+            case "int" -> Integer.class;
+            case "long" -> Long.class;
+            case "float" -> Float.class;
+            case "double" -> Double.class;
+            case "char" -> Character.class;
+            default -> type;
+        };
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> RegisteredConverter<T> registeredConverter(Class<T> targetType, CustomTypeConverter<? extends T> converter) {
+        return new RegisteredConverter<>((Class<T>) wrap(targetType), converter);
+    }
+
+    private static final class RegisteredConverter<T> {
+        private final Class<T> targetType;
+        private final CustomTypeConverter<? extends T> converter;
+
+        private RegisteredConverter(Class<T> targetType, CustomTypeConverter<? extends T> converter) {
+            this.targetType = targetType;
+            this.converter = converter;
+        }
+
+        private boolean supports(Class<?> targetType) {
+            return this.targetType == targetType;
+        }
+
+        private Object convert(Object value) {
+            return converter.convert(value);
+        }
     }
 }
