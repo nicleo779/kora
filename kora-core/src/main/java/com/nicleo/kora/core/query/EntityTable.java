@@ -39,9 +39,7 @@ public abstract class EntityTable<T> {
         return new Column<>(this, columnName, javaType);
     }
 
-    public final EntityTable<T> as(String alias) {
-        return copy(alias);
-    }
-
-    protected abstract EntityTable<T> copy(String alias);
+    public abstract <V> Column<T, V> idColumn();
+    public abstract String fieldName(String column);
+    public abstract String columnName(String field);
 }

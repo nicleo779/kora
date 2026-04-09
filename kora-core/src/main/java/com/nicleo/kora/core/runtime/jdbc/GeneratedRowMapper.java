@@ -1,38 +1,36 @@
 package com.nicleo.kora.core.runtime.jdbc;
 
+import com.nicleo.kora.core.annotation.Alias;
 import com.nicleo.kora.core.runtime.FieldInfo;
 import com.nicleo.kora.core.runtime.GeneratedReflector;
 import com.nicleo.kora.core.runtime.RowMapper;
 import com.nicleo.kora.core.runtime.TypeConverter;
-import com.nicleo.kora.core.util.DefaultNameConverter;
-import com.nicleo.kora.core.util.NameConverter;
 
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 public final class GeneratedRowMapper<T> implements RowMapper<T> {
-    private final Class<T> entityType;
     private final GeneratedReflector<T> reflector;
-    private final NameConverter nameConverter;
     private final TypeConverter typeConverter;
+    private final Map<String, String> columnToField;
 
     public GeneratedRowMapper(Class<T> entityType, GeneratedReflector<T> reflector) {
-        this(entityType, reflector, DefaultNameConverter.INSTANCE, new TypeConverter());
+        this(entityType, reflector, new TypeConverter());
     }
 
-    public GeneratedRowMapper(Class<T> entityType, GeneratedReflector<T> reflector, NameConverter nameConverter) {
-        this(entityType, reflector, nameConverter, new TypeConverter());
-    }
-
-    public GeneratedRowMapper(Class<T> entityType, GeneratedReflector<T> reflector, NameConverter nameConverter, TypeConverter typeConverter) {
-        this.entityType = Objects.requireNonNull(entityType, "entityType");
+    public GeneratedRowMapper(Class<T> entityType, GeneratedReflector<T> reflector, TypeConverter typeConverter) {
+        Objects.requireNonNull(entityType, "entityType");
         this.reflector = Objects.requireNonNull(reflector, "reflector");
-        this.nameConverter = Objects.requireNonNull(nameConverter, "nameConverter");
         this.typeConverter = Objects.requireNonNull(typeConverter, "typeConverter");
+        this.columnToField = buildColumnToFieldMap(reflector);
     }
 
     @Override
@@ -60,7 +58,11 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
         if (reflector.hasField(columnLabel)) {
             return columnLabel;
         }
-        return nameConverter.columnToField(entityType, columnLabel);
+        String mappedField = columnToField.get(normalizeColumnLabel(columnLabel));
+        if (mappedField != null) {
+            return mappedField;
+        }
+        return snakeToCamel(columnLabel);
     }
 
     private Class<?> resolveTargetType(Type type) {
@@ -71,5 +73,49 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
             return rawType;
         }
         return null;
+    }
+
+    private Map<String, String> buildColumnToFieldMap(GeneratedReflector<T> reflector) {
+        Map<String, String> mapping = new HashMap<>();
+        for (String fieldName : reflector.getFields()) {
+            FieldInfo fieldInfo = reflector.getField(fieldName);
+            if (fieldInfo == null) {
+                continue;
+            }
+            mapping.putIfAbsent(normalizeColumnLabel(fieldName), fieldName);
+            for (Annotation annotation : fieldInfo.annotations()) {
+                if (annotation instanceof Alias alias) {
+                    mapping.put(normalizeColumnLabel(alias.value()), fieldName);
+                }
+            }
+        }
+        return mapping;
+    }
+
+    private String normalizeColumnLabel(String columnLabel) {
+        return columnLabel == null ? null : columnLabel.toLowerCase(Locale.ROOT);
+    }
+
+    private String snakeToCamel(String columnLabel) {
+        if (columnLabel == null || columnLabel.isEmpty()) {
+            return columnLabel;
+        }
+        String normalized = columnLabel.toLowerCase(Locale.ROOT);
+        StringBuilder builder = new StringBuilder(normalized.length());
+        boolean upperNext = false;
+        for (int i = 0; i < normalized.length(); i++) {
+            char current = normalized.charAt(i);
+            if (current == '_') {
+                upperNext = true;
+                continue;
+            }
+            if (upperNext) {
+                builder.append(Character.toUpperCase(current));
+                upperNext = false;
+            } else {
+                builder.append(current);
+            }
+        }
+        return builder.toString();
     }
 }

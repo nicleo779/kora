@@ -1,5 +1,6 @@
 package com.nicleo.kora.core.query;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public final class Column<T, V> {
@@ -65,6 +66,30 @@ public final class Column<T, V> {
         return valueCondition("LIKE", value);
     }
 
+    public Condition isNull() {
+        return (sql, args) -> sql.append(expression()).append(" IS NULL");
+    }
+
+    public Condition isNotNull() {
+        return (sql, args) -> sql.append(expression()).append(" IS NOT NULL");
+    }
+
+    public Condition in(Iterable<?> values) {
+        return iterableCondition("IN", values, false);
+    }
+
+    public Condition notIn(Iterable<?> values) {
+        return iterableCondition("NOT IN", values, true);
+    }
+
+    public Condition between(Object start, Object end) {
+        return (sql, args) -> {
+            sql.append(expression()).append(" BETWEEN ? AND ?");
+            args.add(start);
+            args.add(end);
+        };
+    }
+
     public Condition eq(Column<?, ?> other) {
         return (sql, args) -> sql.append(expression()).append(" = ").append(other.expression());
     }
@@ -73,6 +98,28 @@ public final class Column<T, V> {
         return (sql, args) -> {
             sql.append(expression()).append(' ').append(operator).append(" ?");
             args.add(value);
+        };
+    }
+
+    private Condition iterableCondition(String operator, Iterable<?> values, boolean whenEmptyAlwaysTrue) {
+        List<Object> items = new ArrayList<>();
+        for (Object value : values) {
+            items.add(value);
+        }
+        return (sql, args) -> {
+            if (items.isEmpty()) {
+                sql.append(whenEmptyAlwaysTrue ? "1 = 1" : "1 = 0");
+                return;
+            }
+            sql.append(expression()).append(' ').append(operator).append(" (");
+            for (int i = 0; i < items.size(); i++) {
+                if (i > 0) {
+                    sql.append(", ");
+                }
+                sql.append('?');
+                args.add(items.get(i));
+            }
+            sql.append(')');
         };
     }
 }

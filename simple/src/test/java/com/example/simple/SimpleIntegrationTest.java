@@ -5,10 +5,13 @@ import com.example.simple.dto.UserFilter;
 import com.example.simple.dto.UserQuery;
 import com.example.simple.dto.UserSummary;
 import com.example.simple.entity.User;
-import com.example.simple.entity.meta.USER;
+import com.example.simple.common.ReadMapper;
 import com.example.simple.mapper.UserMapper;
 import com.example.simple.mapper.UserMapperImpl;
 import com.example.simple.query.UserTable;
+import com.nicleo.kora.core.mapper.BaseMapper;
+import com.nicleo.kora.core.query.Page;
+import com.nicleo.kora.core.query.Paging;
 import com.nicleo.kora.core.query.Wrapper;
 import com.nicleo.kora.core.runtime.FieldInfo;
 import com.nicleo.kora.core.runtime.GeneratedReflector;
@@ -52,16 +55,18 @@ class SimpleIntegrationTest {
 
         try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
             statement.execute("drop table if exists users");
-            statement.execute("create table users(id bigint auto_increment primary key, name varchar(64), age int, user_name varchar(64))");
-            statement.execute("insert into users(name, age, user_name) values ('Alice', 18, 'alice_01'), ('Bob', 25, 'bob_02'), ('Cindy', 30, 'cindy_03')");
+            statement.execute("create table users(id bigint auto_increment primary key, name varchar(64), age int, login_name varchar(64))");
+            statement.execute("insert into users(name, age, login_name) values ('Alice', 18, 'alice_01'), ('Bob', 25, 'bob_02'), ('Cindy', 30, 'cindy_03')");
         }
     }
 
     @Test
     void generatedMapperAndMetaShouldWork() {
-        assertEquals("name", USER.name);
-        assertEquals("age", USER.age);
-        assertEquals("userName", USER.userName);
+        assertEquals("users", UserTable.USERS.tableName());
+        assertEquals("id", UserTable.USERS.ID.columnName());
+        assertEquals("name", UserTable.USERS.NAME.columnName());
+        assertEquals("age", UserTable.USERS.AGE.columnName());
+        assertEquals("login_name", UserTable.USERS.USER_NAME.columnName());
         User alice = userMapper.selectById(1L);
         assertNotNull(alice);
         assertEquals(1L, alice.getId());
@@ -71,7 +76,8 @@ class SimpleIntegrationTest {
         List<User> ranged = userMapper.selectByAgeRange(20, 30);
         assertEquals(2, ranged.size());
 
-        List<User> ids = userMapper.selectByIds(List.of(1L, 3L));
+        List<Long> queryIds = List.of(1L, 3L);
+        List<User> ids = userMapper.selectByIds(queryIds);
         assertEquals(List.of("Alice", "Cindy"), ids.stream().map(User::getName).toList());
 
         List<UserSummary> summaries = userMapper.selectSummaries(new UserQuery(20, 30));
@@ -85,29 +91,97 @@ class SimpleIntegrationTest {
         assertEquals(1, userMapper.updateNameById(1L, "Alicia"));
         assertEquals("Alicia", userMapper.selectById(1L).getName());
 
+        Integer minAge = 20;
+        Integer maxAge = 30;
         List<User> wrapped = userMapper.selectList(
-                Wrapper.of(User.class)
-                        .selectAll()
-                        .from(UserTable.USERS)
-                        .where(where -> where.geIfPresent(UserTable.USERS.AGE, 20).leIfPresent(UserTable.USERS.AGE, 30))
+                Wrapper.<User>where()
+                        .where(where -> where
+                                .ge(minAge != null, UserTable.USERS.AGE, minAge)
+                                .le(maxAge != null, UserTable.USERS.AGE, maxAge))
                         .orderBy(order -> order.asc(UserTable.USERS.ID))
         );
         assertEquals(List.of("Bob", "Cindy"), wrapped.stream().map(User::getName).toList());
 
         User wrappedOne = userMapper.selectOne(
-                Wrapper.of(User.class)
-                        .selectAll()
-                        .from(UserTable.USERS)
+                Wrapper.<User>where()
                         .where(where -> where.eq(UserTable.USERS.ID, 2L))
                         .limit(1)
         );
         assertNotNull(wrappedOne);
         assertEquals("Bob", wrappedOne.getName());
 
-        int updated = userMapper.insert(new User(null, "Dylan", 27,"zhansan"));
+        BaseMapper<User> baseMapper = (ReadMapper<User>) userMapper;
+
+        int updated = baseMapper.insert(new User(null, "Dylan", 27,"zhansan"));
         assertEquals(1, updated);
         assertEquals(4, userMapper.selectByAgeRange(null, null).size());
         assertEquals("zhansan", userMapper.selectById(4L).getUserName());
+        User selectedByCapability = baseMapper.selectById(1L);
+        assertNotNull(selectedByCapability);
+        assertEquals("Alicia", selectedByCapability.getName());
+
+        List<java.io.Serializable> capabilityIds = List.of(1L, 3L);
+        List<User> selectedByIds = baseMapper.selectByIds(capabilityIds);
+        assertEquals(List.of("Alicia", "Cindy"), selectedByIds.stream().map(User::getName).toList());
+
+        Paging paging = new Paging();
+        paging.setIndex(1L);
+        paging.setSize(2L);
+        Page<User> page = baseMapper.page(
+                paging,
+                Wrapper.<User>where()
+                        .orderBy(order -> order.asc(UserTable.USERS.ID))
+        );
+        assertEquals(1L, page.current());
+        assertEquals(4L, page.total());
+        assertEquals(List.of("Alicia", "Bob"), page.records().stream().map(User::getName).toList());
+
+        Paging xmlPaging = new Paging();
+        xmlPaging.setIndex(2L);
+        xmlPaging.setSize(2L);
+        Page<User> xmlPage = userMapper.selectPage(xmlPaging, 18, 30);
+        assertEquals(2L, xmlPage.current());
+        assertEquals(4L, xmlPage.total());
+        assertEquals(List.of("Cindy", "Dylan"), xmlPage.records().stream().map(User::getName).toList());
+
+        int insertedByBase = baseMapper.insert(new User(null, "Ethan", 31, "ethan_05"));
+        assertEquals(1, insertedByBase);
+        assertEquals("Ethan", userMapper.selectById(5L).getName());
+
+        User updateTarget = new User(5L, "EthanX", null, null);
+        assertEquals(1, baseMapper.updateById(updateTarget));
+        assertEquals("EthanX", userMapper.selectById(5L).getName());
+
+        assertEquals(1, baseMapper.update(
+                Wrapper.<User>update()
+                        .set(UserTable.USERS.NAME, "Bobby")
+                        .where(where -> where.eq(UserTable.USERS.ID, 2L))
+                        .limit(1)
+        ));
+        assertEquals("Bobby", userMapper.selectById(2L).getName());
+
+        assertEquals(1, baseMapper.deleteById(5L));
+        assertEquals(4, userMapper.selectByAgeRange(null, null).size());
+
+        assertEquals(2, baseMapper.insert(List.of(
+                new User(null, "Fiona", 26, "fiona_06"),
+                new User(null, "Gina", 28, "gina_07")
+        )));
+        assertEquals("Fiona", userMapper.selectById(6L).getName());
+        assertEquals("Gina", userMapper.selectById(7L).getName());
+
+        assertEquals(2, baseMapper.updateById(List.of(
+                new User(6L, "FionaX", null, null),
+                new User(7L, "GinaX", null, null)
+        )));
+        assertEquals("FionaX", userMapper.selectById(6L).getName());
+        assertEquals("GinaX", userMapper.selectById(7L).getName());
+
+        assertEquals(2, baseMapper.delete(
+                Wrapper.<User>where()
+                        .where(where -> where.in(UserTable.USERS.ID, List.of(6L, 7L)))
+        ));
+        assertEquals(4, userMapper.selectByAgeRange(null, null).size());
     }
 
     @Test

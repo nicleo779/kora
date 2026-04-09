@@ -4,7 +4,15 @@ public final class Wrapper {
     private Wrapper() {
     }
 
-    public static <T> QueryWrapper<T> of(Class<T> entityType) {
-        return new QueryWrapper<>(entityType);
+    public static <T> QueryWrapper<T> of() {
+        return new QueryWrapper<>();
+    }
+
+    public static <T> WhereWrapper<T> where() {
+        return new WhereWrapper<>();
+    }
+
+    public static <T> UpdateWrapper<T> update() {
+        return new UpdateWrapper<>();
     }
 }

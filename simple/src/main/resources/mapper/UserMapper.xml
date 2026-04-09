@@ -1,12 +1,12 @@
 <mapper namespace="com.example.simple.mapper.UserMapper">
     <select id="selectById">
-        select id, name, age, user_name
+        select id, name, age, login_name
         from users
         where id = #{id}
     </select>
 
     <select id="selectByAgeRange">
-        select id, name, age, user_name
+        select id, name, age, login_name
         from users
         <where>
             <if test="minAge != null">
@@ -20,7 +20,7 @@
     </select>
 
     <select id="selectByIds">
-        select id, name, age, user_name
+        select id, name, age, login_name
         from users
         <where>
             <if test="ids != null">
@@ -34,7 +34,7 @@
     </select>
 
     <select id="selectSummaries">
-        select id, name, user_name
+        select id, name, login_name
         from users
         <where>
             <if test="query.minAge != null">
@@ -48,7 +48,7 @@
     </select>
 
     <select id="selectByNestedFilter">
-        select id, name, age, user_name
+        select id, name, age, login_name
         from users
         <where>
             <if test="filter.range.minAge != null">
@@ -61,8 +61,18 @@
         order by id
     </select>
 
-    <insert id="insert">
-        insert into users(name, age, user_name)
-        values(#{user.name}, #{user.age}, #{user.userName})
-    </insert>
+    <select id="selectPage">
+        select id, name, age, login_name
+        from users
+        <where>
+            <if test="minAge != null">
+                age <![CDATA[ >= ]]> #{minAge}
+            </if>
+            <if test="maxAge != null">
+                and age <![CDATA[ <= ]]> #{maxAge}
+            </if>
+        </where>
+        order by id
+    </select>
+
 </mapper>

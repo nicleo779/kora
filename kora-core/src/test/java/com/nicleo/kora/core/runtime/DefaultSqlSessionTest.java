@@ -1,19 +1,23 @@
 package com.nicleo.kora.core.runtime;
 
+import com.nicleo.kora.core.annotation.Alias;
 import com.nicleo.kora.core.runtime.jdbc.DefaultSqlSession;
-import com.nicleo.kora.core.util.DefaultNameConverter;
-import com.nicleo.kora.core.util.NameConverter;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.lang.annotation.Annotation;
+import java.io.PrintWriter;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Logger;
+
+import javax.sql.DataSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -21,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DefaultSqlSessionTest {
     private JdbcDataSource dataSource;
@@ -154,11 +159,11 @@ class DefaultSqlSessionTest {
     @Test
     void interceptorCanRewriteSqlArgumentsAndSeeContext() {
         List<SqlExecutionContext> contexts = new ArrayList<>();
-        DefaultSqlSession interceptedSession = new DefaultSqlSession(dataSource, (context, request) -> {
+        DefaultSqlSession interceptedSession = new DefaultSqlSession(dataSource);
+        interceptedSession.addInterceptor((context, request) -> {
             contexts.add(context);
             return request.withArgs(new Object[]{2L});
         });
-
         UserAccount user = interceptedSession.selectOne(
                 "select id, user_name, age from user_account where id = ?",
                 new Object[]{1L},
@@ -178,7 +183,21 @@ class DefaultSqlSessionTest {
     @Test
     void interceptorCanUseCurrentSessionForCountQuery() {
         List<Long> totals = new ArrayList<>();
-        DefaultSqlSession interceptedSession = new DefaultSqlSession(dataSource, (context, request) -> {
+        DefaultSqlSession interceptedSession = getDefaultSqlSession(totals);
+        List<UserAccount> users = interceptedSession.selectList(
+                "select id, user_name, age from user_account order by id",
+                new Object[0],
+                new SqlExecutionContext(interceptedSession, "demo.Mapper", "pagedQuery", "pagedQuery", com.nicleo.kora.core.xml.SqlCommandType.SELECT, UserAccount.class, true),
+                UserAccount.class
+        );
+
+        assertEquals(2, users.size());
+        assertEquals(List.of(2L), totals);
+    }
+
+    private DefaultSqlSession getDefaultSqlSession(List<Long> totals) {
+        DefaultSqlSession interceptedSession = new DefaultSqlSession(dataSource);
+        interceptedSession.addInterceptor((context, request) -> {
             if ("pagedQuery".equals(context.getStatementId())) {
                 CountResult total = context.getSqlSession().selectOne(
                         "select count(*) as total from user_account",
@@ -190,16 +209,7 @@ class DefaultSqlSessionTest {
             }
             return request;
         });
-
-        List<UserAccount> users = interceptedSession.selectList(
-                "select id, user_name, age from user_account order by id",
-                new Object[0],
-                new SqlExecutionContext(interceptedSession, "demo.Mapper", "pagedQuery", "pagedQuery", com.nicleo.kora.core.xml.SqlCommandType.SELECT, UserAccount.class, true),
-                UserAccount.class
-        );
-
-        assertEquals(2, users.size());
-        assertEquals(List.of(2L), totals);
+        return interceptedSession;
     }
 
     @Test
@@ -252,37 +262,44 @@ class DefaultSqlSessionTest {
     }
 
     @Test
-    void customNameConverterCanMapAliasedColumns() {
-        AtomicReference<Class<?>> convertedType = new AtomicReference<>();
-        NameConverter prefixedConverter = new NameConverter() {
-            @Override
-            public String columnToField(Class<?> entityType, String columnName) {
-                convertedType.set(entityType);
-                String normalized = columnName == null ? null : columnName.toLowerCase();
-                if (normalized != null && normalized.startsWith("col_")) {
-                    normalized = normalized.substring(4);
-                }
-                return DefaultNameConverter.INSTANCE.columnToField(entityType, normalized);
-            }
-
-            @Override
-            public String fieldToColumn(Class<?> entityType, String fieldName) {
-                return "col_" + DefaultNameConverter.INSTANCE.fieldToColumn(entityType, fieldName);
-            }
-        };
-        DefaultSqlSession customSession = new DefaultSqlSession(dataSource, prefixedConverter);
-
-        UserAccount user = customSession.selectOne(
-                "select id as col_id, user_name as col_user_name, age as col_age from user_account where id = ?",
+    void aliasAnnotationInFieldInfoCanMapAliasedColumns() {
+        UserAccount user = sqlSession.selectOne(
+                "select id, user_name as login_name, age from user_account where id = ?",
                 new Object[]{1L},
                 UserAccount.class
         );
 
         assertNotNull(user);
-        assertEquals(UserAccount.class, convertedType.get());
         assertEquals(1L, user.getId());
         assertEquals("Alice", user.getUserName());
         assertEquals(18, user.getAge());
+    }
+
+    @Test
+    void sessionShouldReuseSingleConnectionUntilClosed() {
+        AtomicInteger openCount = new AtomicInteger();
+        DefaultSqlSession session = new DefaultSqlSession(countingDataSource(openCount));
+        GeneratedReflectors.install(new TestReflectorResolver());
+
+        session.update("drop table if exists user_account", new Object[0]);
+        session.update("create table user_account(id bigint primary key, user_name varchar(64), age int)", new Object[0]);
+        session.update("insert into user_account(id, user_name, age) values(?, ?, ?)", new Object[]{1L, "Alice", 18});
+        session.selectOne("select id, user_name, age from user_account where id = ?", new Object[]{1L}, UserAccount.class);
+        session.selectList("select id, user_name, age from user_account", new Object[0], UserAccount.class);
+
+        assertEquals(1, openCount.get());
+
+        session.close();
+    }
+
+    @Test
+    void closedSessionShouldRejectFurtherOperations() {
+        sqlSession.close();
+
+        SqlSessionException ex = assertThrows(SqlSessionException.class, () ->
+                sqlSession.selectOne("select id, user_name, age from user_account where id = ?", new Object[]{1L}, UserAccount.class)
+        );
+        assertTrue(ex.getMessage().contains("closed"));
     }
 
     private void updateUserNameDirectly(long id, String userName) throws Exception {
@@ -294,6 +311,61 @@ class DefaultSqlSessionTest {
             statement.setLong(2, id);
             statement.executeUpdate();
         }
+    }
+
+    private DataSource countingDataSource(AtomicInteger openCount) {
+        JdbcDataSource delegate = new JdbcDataSource();
+        delegate.setURL("jdbc:h2:mem:kora_session;MODE=MySQL;DB_CLOSE_DELAY=-1");
+        delegate.setUser("sa");
+        delegate.setPassword("");
+        return new DataSource() {
+            @Override
+            public Connection getConnection() throws java.sql.SQLException {
+                openCount.incrementAndGet();
+                return delegate.getConnection();
+            }
+
+            @Override
+            public Connection getConnection(String user, String password) throws java.sql.SQLException {
+                openCount.incrementAndGet();
+                return delegate.getConnection(user, password);
+            }
+
+            @Override
+            public PrintWriter getLogWriter() throws java.sql.SQLException {
+                return delegate.getLogWriter();
+            }
+
+            @Override
+            public void setLogWriter(PrintWriter out) throws java.sql.SQLException {
+                delegate.setLogWriter(out);
+            }
+
+            @Override
+            public void setLoginTimeout(int seconds) throws java.sql.SQLException {
+                delegate.setLoginTimeout(seconds);
+            }
+
+            @Override
+            public int getLoginTimeout() throws java.sql.SQLException {
+                return delegate.getLoginTimeout();
+            }
+
+            @Override
+            public Logger getParentLogger() {
+                return Logger.getGlobal();
+            }
+
+            @Override
+            public <T> T unwrap(Class<T> iface) throws java.sql.SQLException {
+                return delegate.unwrap(iface);
+            }
+
+            @Override
+            public boolean isWrapperFor(Class<?> iface) throws java.sql.SQLException {
+                return delegate.isWrapperFor(iface);
+            }
+        };
     }
 
     static final class TestReflectorResolver implements GeneratedReflectors.Resolver {
@@ -317,19 +389,41 @@ class DefaultSqlSessionTest {
         private String userName;
         private int age;
 
-        public long getId() { return id; }
-        public void setId(long id) { this.id = id; }
-        public String getUserName() { return userName; }
-        public void setUserName(String userName) { this.userName = userName; }
-        public int getAge() { return age; }
-        public void setAge(int age) { this.age = age; }
+        public long getId() {
+            return id;
+        }
+
+        public void setId(long id) {
+            this.id = id;
+        }
+
+        public String getUserName() {
+            return userName;
+        }
+
+        public void setUserName(String userName) {
+            this.userName = userName;
+        }
+
+        public int getAge() {
+            return age;
+        }
+
+        public void setAge(int age) {
+            this.age = age;
+        }
     }
 
     static final class CountResult {
         private Long total;
 
-        public Long getTotal() { return total; }
-        public void setTotal(Long total) { this.total = total; }
+        public Long getTotal() {
+            return total;
+        }
+
+        public void setTotal(Long total) {
+            this.total = total;
+        }
     }
 
     static final class TimeUserAccount {
@@ -338,25 +432,51 @@ class DefaultSqlSessionTest {
         private int age;
         private LocalDateTime createdAt;
 
-        public long getId() { return id; }
-        public void setId(long id) { this.id = id; }
-        public String getUserName() { return userName; }
-        public void setUserName(String userName) { this.userName = userName; }
-        public int getAge() { return age; }
-        public void setAge(int age) { this.age = age; }
-        public LocalDateTime getCreatedAt() { return createdAt; }
-        public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+        public long getId() {
+            return id;
+        }
+
+        public void setId(long id) {
+            this.id = id;
+        }
+
+        public String getUserName() {
+            return userName;
+        }
+
+        public void setUserName(String userName) {
+            this.userName = userName;
+        }
+
+        public int getAge() {
+            return age;
+        }
+
+        public void setAge(int age) {
+            this.age = age;
+        }
+
+        public LocalDateTime getCreatedAt() {
+            return createdAt;
+        }
+
+        public void setCreatedAt(LocalDateTime createdAt) {
+            this.createdAt = createdAt;
+        }
     }
 
     static final class UserAccountGeneratedReflector implements GeneratedReflector<UserAccount> {
         private static final FieldInfo[] FIELDS = new FieldInfo[]{
                 new FieldInfo("id", Long.class, 0, new java.lang.annotation.Annotation[0]),
-                new FieldInfo("userName", String.class, 0, new java.lang.annotation.Annotation[0]),
+                new FieldInfo("userName", String.class, 0, new java.lang.annotation.Annotation[]{alias("login_name")}),
                 new FieldInfo("age", Integer.class, 0, new java.lang.annotation.Annotation[0])
         };
 
         @Override
-        public UserAccount newInstance() { return new UserAccount(); }
+        public UserAccount newInstance() {
+            return new UserAccount();
+        }
+
         @Override
         public Object invoke(UserAccount target, String method, Object[] args) {
             return switch (method) {
@@ -366,15 +486,18 @@ class DefaultSqlSessionTest {
                 default -> throw new IllegalArgumentException("Unknown method: " + method);
             };
         }
+
         @Override
         public void set(UserAccount target, String property, Object value) {
             switch (property) {
                 case "id" -> target.setId((Long) value);
                 case "userName" -> target.setUserName((String) value);
                 case "age" -> target.setAge((Integer) value);
-                default -> { }
+                default -> {
+                }
             }
         }
+
         @Override
         public Object get(UserAccount target, String property) {
             return switch (property) {
@@ -384,8 +507,12 @@ class DefaultSqlSessionTest {
                 default -> throw new IllegalArgumentException("Unknown property: " + property);
             };
         }
+
         @Override
-        public String[] getFields() { return new String[]{"id", "userName", "age"}; }
+        public String[] getFields() {
+            return new String[]{"id", "userName", "age"};
+        }
+
         @Override
         public FieldInfo getField(String field) {
             return switch (field) {
@@ -403,7 +530,10 @@ class DefaultSqlSessionTest {
         };
 
         @Override
-        public CountResult newInstance() { return new CountResult(); }
+        public CountResult newInstance() {
+            return new CountResult();
+        }
+
         @Override
         public Object invoke(CountResult target, String method, Object[] args) {
             return switch (method) {
@@ -411,13 +541,16 @@ class DefaultSqlSessionTest {
                 default -> throw new IllegalArgumentException("Unknown method: " + method);
             };
         }
+
         @Override
         public void set(CountResult target, String property, Object value) {
             switch (property) {
                 case "total" -> target.setTotal((Long) value);
-                default -> { }
+                default -> {
+                }
             }
         }
+
         @Override
         public Object get(CountResult target, String property) {
             return switch (property) {
@@ -425,8 +558,12 @@ class DefaultSqlSessionTest {
                 default -> throw new IllegalArgumentException("Unknown property: " + property);
             };
         }
+
         @Override
-        public String[] getFields() { return new String[]{"total"}; }
+        public String[] getFields() {
+            return new String[]{"total"};
+        }
+
         @Override
         public FieldInfo getField(String field) {
             return "total".equals(field) ? FIELDS[0] : null;
@@ -436,13 +573,16 @@ class DefaultSqlSessionTest {
     static final class TimeUserAccountGeneratedReflector implements GeneratedReflector<TimeUserAccount> {
         private static final FieldInfo[] FIELDS = new FieldInfo[]{
                 new FieldInfo("id", Long.class, 0, new java.lang.annotation.Annotation[0]),
-                new FieldInfo("userName", String.class, 0, new java.lang.annotation.Annotation[0]),
+                new FieldInfo("userName", String.class, 0, new java.lang.annotation.Annotation[]{alias("login_name")}),
                 new FieldInfo("age", Integer.class, 0, new java.lang.annotation.Annotation[0]),
                 new FieldInfo("createdAt", LocalDateTime.class, 0, new java.lang.annotation.Annotation[0])
         };
 
         @Override
-        public TimeUserAccount newInstance() { return new TimeUserAccount(); }
+        public TimeUserAccount newInstance() {
+            return new TimeUserAccount();
+        }
+
         @Override
         public Object invoke(TimeUserAccount target, String method, Object[] args) {
             return switch (method) {
@@ -453,6 +593,7 @@ class DefaultSqlSessionTest {
                 default -> throw new IllegalArgumentException("Unknown method: " + method);
             };
         }
+
         @Override
         public void set(TimeUserAccount target, String property, Object value) {
             switch (property) {
@@ -460,9 +601,11 @@ class DefaultSqlSessionTest {
                 case "userName" -> target.setUserName((String) value);
                 case "age" -> target.setAge((Integer) value);
                 case "createdAt" -> target.setCreatedAt((LocalDateTime) value);
-                default -> { }
+                default -> {
+                }
             }
         }
+
         @Override
         public Object get(TimeUserAccount target, String property) {
             return switch (property) {
@@ -473,8 +616,12 @@ class DefaultSqlSessionTest {
                 default -> throw new IllegalArgumentException("Unknown property: " + property);
             };
         }
+
         @Override
-        public String[] getFields() { return new String[]{"id", "userName", "age", "createdAt"}; }
+        public String[] getFields() {
+            return new String[]{"id", "userName", "age", "createdAt"};
+        }
+
         @Override
         public FieldInfo getField(String field) {
             return switch (field) {
@@ -485,5 +632,19 @@ class DefaultSqlSessionTest {
                 default -> null;
             };
         }
+    }
+
+    private static Annotation alias(String value) {
+        return new Alias() {
+            @Override
+            public String value() {
+                return value;
+            }
+
+            @Override
+            public Class<? extends Annotation> annotationType() {
+                return Alias.class;
+            }
+        };
     }
 }

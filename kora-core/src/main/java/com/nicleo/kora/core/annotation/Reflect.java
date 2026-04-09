@@ -8,7 +8,7 @@ import java.lang.annotation.Target;
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.SOURCE)
 public @interface Reflect {
-    String suffix() default "GeneratedReflector";
+    String suffix() default "Reflector";
 
     ReflectMetadataLevel metadata() default ReflectMetadataLevel.FIELDS;
 

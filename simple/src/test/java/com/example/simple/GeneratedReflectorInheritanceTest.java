@@ -1,9 +1,9 @@
 package com.example.simple;
 
 import com.example.simple.inheritance.AdminUser;
-import com.example.simple.inheritance.AdminUserGeneratedReflector;
+import com.example.simple.inheritance.AdminUserReflector;
 import com.example.simple.inheritance.BaseUser;
-import com.example.simple.inheritance.BaseUserGeneratedReflector;
+import com.example.simple.inheritance.BaseUserReflector;
 import com.example.simple.inheritance.TestReflectTag;
 import com.nicleo.kora.core.runtime.ClassInfo;
 import com.nicleo.kora.core.runtime.GeneratedReflector;
@@ -27,10 +27,10 @@ class GeneratedReflectorInheritanceTest {
             @SuppressWarnings("unchecked")
             public <T> GeneratedReflector<T> get(Class<T> type) {
                 if (type == BaseUser.class) {
-                    return (GeneratedReflector<T>) new BaseUserGeneratedReflector();
+                    return (GeneratedReflector<T>) new BaseUserReflector();
                 }
                 if (type == AdminUser.class) {
-                    return (GeneratedReflector<T>) new AdminUserGeneratedReflector();
+                    return (GeneratedReflector<T>) new AdminUserReflector();
                 }
                 throw new IllegalArgumentException("Unknown type: " + type.getName());
             }

@@ -1,8 +1,11 @@
 package com.example.simple.dto;
 
+import com.nicleo.kora.core.annotation.Alias;
+
 public class UserSummary {
     private Long id;
     private String name;
+    @Alias("login_name")
     private String userName;
 
     public UserSummary() {

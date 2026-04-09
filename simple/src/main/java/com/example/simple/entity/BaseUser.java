@@ -1,6 +1,7 @@
 package com.example.simple.entity;
 
 import com.example.simple.TestAnnotation;
+import com.nicleo.kora.core.annotation.ID;
 import com.nicleo.kora.core.annotation.Reflect;
 import com.nicleo.kora.core.annotation.ReflectMetadataLevel;
 import lombok.Data;
@@ -8,6 +9,7 @@ import lombok.Data;
 @Data
 public class BaseUser<T> {
     @TestAnnotation("userId")
+    @ID
     private Long id;
 
     private T tag;
