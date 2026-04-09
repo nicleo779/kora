@@ -4,20 +4,17 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public final class TypeConverter {
-    private static final List<RegisteredConverter<?>> CUSTOM_CONVERTERS = new CopyOnWriteArrayList<>();
+    private final List<RegisteredConverter<?>> customConverters = new CopyOnWriteArrayList<>();
 
-    private TypeConverter() {
+    public <T> void register(Class<T> targetType, CustomTypeConverter<? extends T> converter) {
+        customConverters.add(registeredConverter(targetType, converter));
     }
 
-    public static <T> void register(Class<T> targetType, CustomTypeConverter<? extends T> converter) {
-        CUSTOM_CONVERTERS.add(registeredConverter(targetType, converter));
+    public void clearCustomConverters() {
+        customConverters.clear();
     }
 
-    public static void clearCustomConverters() {
-        CUSTOM_CONVERTERS.clear();
-    }
-
-    public static Object cast(Object value, Class<?> targetType) {
+    public Object cast(Object value, Class<?> targetType) {
         Class<?> normalizedTargetType = wrap(targetType);
         if (value == null) {
             if (normalizedTargetType != targetType || targetType.isPrimitive()) {
@@ -64,8 +61,8 @@ public final class TypeConverter {
         return normalizedTargetType.cast(value);
     }
 
-    private static Object applyCustomConverters(Object value, Class<?> targetType) {
-        for (RegisteredConverter<?> registeredConverter : CUSTOM_CONVERTERS) {
+    private Object applyCustomConverters(Object value, Class<?> targetType) {
+        for (RegisteredConverter<?> registeredConverter : customConverters) {
             if (registeredConverter.supports(targetType)) {
                 return registeredConverter.convert(value);
             }

@@ -9,6 +9,16 @@ public interface SqlSession {
 
     int update(String sql, Object[] args);
 
+    TypeConverter getTypeConverter();
+
+    default <T> void registerTypeConverter(Class<T> targetType, CustomTypeConverter<? extends T> converter) {
+        getTypeConverter().register(targetType, converter);
+    }
+
+    default void clearTypeConverters() {
+        getTypeConverter().clearCustomConverters();
+    }
+
     default <T> T selectOne(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
         return selectOne(sql, args, resultType);
     }

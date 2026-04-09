@@ -1,12 +1,12 @@
 <mapper namespace="com.example.simple.mapper.UserMapper">
     <select id="selectById">
-        select id, name, age
+        select id, name, age, user_name
         from users
         where id = #{id}
     </select>
 
     <select id="selectByAgeRange">
-        select id, name, age
+        select id, name, age, user_name
         from users
         <where>
             <if test="minAge != null">
@@ -20,7 +20,7 @@
     </select>
 
     <select id="selectByIds">
-        select id, name, age
+        select id, name, age, user_name
         from users
         <where>
             <if test="ids != null">
@@ -33,8 +33,36 @@
         order by id
     </select>
 
+    <select id="selectSummaries">
+        select id, name, user_name
+        from users
+        <where>
+            <if test="query.minAge != null">
+                age <![CDATA[ >= ]]> #{query.minAge}
+            </if>
+            <if test="query.maxAge != null">
+                and age <![CDATA[ <= ]]> #{query.maxAge}
+            </if>
+        </where>
+        order by id
+    </select>
+
+    <select id="selectByNestedFilter">
+        select id, name, age, user_name
+        from users
+        <where>
+            <if test="filter.range.minAge != null">
+                age <![CDATA[ >= ]]> #{filter.range.minAge}
+            </if>
+            <if test="filter.range.maxAge != null">
+                and age <![CDATA[ <= ]]> #{filter.range.maxAge}
+            </if>
+        </where>
+        order by id
+    </select>
+
     <insert id="insert">
-        insert into users(name, age)
-        values(#{user.name}, #{user.age})
+        insert into users(name, age, user_name)
+        values(#{user.name}, #{user.age}, #{user.userName})
     </insert>
 </mapper>

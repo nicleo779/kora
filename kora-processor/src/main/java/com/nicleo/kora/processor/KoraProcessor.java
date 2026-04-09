@@ -1,6 +1,7 @@
 package com.nicleo.kora.processor;
 
 import com.nicleo.kora.core.annotation.KoraScan;
+import com.nicleo.kora.core.annotation.MapperCapability;
 import com.nicleo.kora.core.annotation.Reflect;
 import com.nicleo.kora.core.annotation.ReflectMetadataLevel;
 import com.nicleo.kora.core.dynamic.BindSqlNode;
@@ -12,7 +13,6 @@ import com.nicleo.kora.core.dynamic.MixedSqlNode;
 import com.nicleo.kora.core.dynamic.TextSqlNode;
 import com.nicleo.kora.core.dynamic.TrimSqlNode;
 import com.nicleo.kora.core.dynamic.WhenSqlNode;
-import com.nicleo.kora.core.util.NameUtils;
 import com.nicleo.kora.core.xml.MapperXmlDefinition;
 import com.nicleo.kora.core.xml.MapperXmlParser;
 import com.nicleo.kora.core.xml.SqlCommandType;
@@ -37,7 +37,9 @@ import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.ExecutableType;
 import javax.lang.model.type.ArrayType;
+import javax.lang.model.type.WildcardType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
@@ -63,10 +65,11 @@ import java.util.stream.Stream;
 
 @SupportedAnnotationTypes({
         "com.nicleo.kora.core.annotation.KoraScan",
+        "com.nicleo.kora.core.annotation.MapperCapability",
         "com.nicleo.kora.core.annotation.Reflect"
 })
 @SupportedOptions("kora.projectDir")
-@SupportedSourceVersion(SourceVersion.RELEASE_17)
+@SupportedSourceVersion(SourceVersion.RELEASE_21)
 public class KoraProcessor extends AbstractProcessor {
     private static final String SQL_SESSION = "com.nicleo.kora.core.runtime.SqlSession";
     private static final String LIST_TYPE = "java.util.List";
@@ -76,8 +79,10 @@ public class KoraProcessor extends AbstractProcessor {
     private Elements elements;
     private Types types;
     private String projectDir;
+    private Map<String, String> activeTypeConstants = Map.of();
 
     private final Map<String, ReflectSpec> reflectSpecs = new LinkedHashMap<>();
+    private final Map<String, MapperCapabilitySpec> mapperCapabilitySpecs = new LinkedHashMap<>();
     private final List<ScanSpec> scanSpecs = new ArrayList<>();
     private final Set<String> generatedReflectors = new HashSet<>();
     private final Set<String> generatedMeta = new HashSet<>();
@@ -97,7 +102,9 @@ public class KoraProcessor extends AbstractProcessor {
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
         collectReflectSpecs(roundEnv);
+        collectMapperCapabilitySpecs(roundEnv);
         collectScanSpecs(roundEnv);
+        collectMapperReflectSpecs();
         generateReflectors();
         generateMeta(roundEnv);
         if (!roundEnv.processingOver() && annotations.isEmpty()) {
@@ -115,6 +122,22 @@ public class KoraProcessor extends AbstractProcessor {
             TypeElement typeElement = (TypeElement) element;
             Reflect reflect = typeElement.getAnnotation(Reflect.class);
             reflectSpecs.put(typeElement.getQualifiedName().toString(), new ReflectSpec(typeElement, reflect.suffix(), reflect.metadata(), reflect.annotationMetadata()));
+        }
+    }
+
+    private void collectMapperCapabilitySpecs(RoundEnvironment roundEnv) {
+        for (Element element : roundEnv.getElementsAnnotatedWith(MapperCapability.class)) {
+            if (element.getKind() != ElementKind.CLASS) {
+                messager.printMessage(Diagnostic.Kind.ERROR, "@MapperCapability can only be used on classes", element);
+                continue;
+            }
+            TypeElement implType = (TypeElement) element;
+            TypeElement contractType = mapperCapabilityContractType(implType);
+            if (contractType == null || contractType.getKind() != ElementKind.INTERFACE) {
+                messager.printMessage(Diagnostic.Kind.ERROR, "@MapperCapability value must be an interface", implType);
+                continue;
+            }
+            mapperCapabilitySpecs.put(contractType.getQualifiedName().toString(), new MapperCapabilitySpec(contractType, implType));
         }
     }
 
@@ -153,6 +176,31 @@ public class KoraProcessor extends AbstractProcessor {
             for (Element rootElement : roundEnv.getRootElements()) {
                 collectAndGenerateMeta(rootElement, scanSpec.entityPackages);
             }
+        }
+    }
+
+    private void collectMapperReflectSpecs() {
+        for (ScanSpec scanSpec : scanSpecs) {
+            try {
+                for (Path xmlFile : findXmlFiles(scanSpec.xmlRoots)) {
+                    MapperXmlDefinition xmlDefinition = parseXml(xmlFile);
+                    TypeElement mapperType = elements.getTypeElement(xmlDefinition.getNamespace());
+                    if (mapperType == null) {
+                        throw new ProcessorException("Mapper interface not found for namespace: " + xmlDefinition.getNamespace());
+                    }
+                    collectMapperReflectSpecs(mapperType, xmlDefinition);
+                }
+            } catch (IOException ex) {
+                messager.printMessage(Diagnostic.Kind.ERROR, "Failed to collect mapper reflect specs: " + ex.getMessage(), scanSpec.configType);
+            } catch (ProcessorException ex) {
+                messager.printMessage(Diagnostic.Kind.ERROR, ex.getMessage(), scanSpec.configType);
+            }
+        }
+    }
+
+    private void collectMapperReflectSpecs(TypeElement mapperType, MapperXmlDefinition xmlDefinition) {
+        for (MapperMethodSpec mapperMethod : mapperMethods(mapperType, xmlDefinition)) {
+            registerMapperMethodReflectTypes(mapperMethod.method(), mapperMethod.statement());
         }
     }
 
@@ -307,7 +355,7 @@ public class KoraProcessor extends AbstractProcessor {
         for (VariableElement field : collectInstanceFields(entityType)) {
             String fieldName = field.getSimpleName().toString();
             source.append("    public static final String ").append(fieldName)
-                    .append(" = \"").append(NameUtils.camelToSnake(fieldName)).append("\";\n");
+                    .append(" = \"").append(fieldName).append("\";\n");
         }
         source.append("}\n");
         return source.toString();
@@ -322,61 +370,296 @@ public class KoraProcessor extends AbstractProcessor {
         boolean includeFieldsMetadata = metadataLevel.includesFields();
         boolean includeMethodsMetadata = metadataLevel.includesMethods();
         boolean includeAnnotationMetadata = reflectSpec != null && reflectSpec.annotationMetadata;
+        boolean useLazyMetadata = includeAnnotationMetadata;
+        Map<String, String> typeConstants = new LinkedHashMap<>();
+        TypeElement declaredSuperType = directSuperType(entityType);
+        TypeElement parentReflectType = declaredSuperType != null && !isJavaLangObject(declaredSuperType)
+                ? reflectSpecs.containsKey(declaredSuperType.getQualifiedName().toString()) ? declaredSuperType : null
+                : null;
+        String parentReflectTypeName = parentReflectType == null ? null : parentReflectType.getQualifiedName().toString();
+        Map<String, List<ExecutableElement>> methodsByName = new LinkedHashMap<>();
+        for (ExecutableElement method : methods) {
+            methodsByName.computeIfAbsent(method.getSimpleName().toString(), ignored -> new ArrayList<>()).add(method);
+        }
         StringBuilder source = new StringBuilder();
         if (!packageName.isEmpty()) {
             source.append("package ").append(packageName).append(";\n\n");
         }
+        source.append("import com.nicleo.kora.core.runtime.ClassInfo;\n");
+        source.append("import com.nicleo.kora.core.runtime.FieldInfo;\n");
+        source.append("import com.nicleo.kora.core.runtime.GeneratedReflector;\n");
+        source.append("import com.nicleo.kora.core.runtime.GeneratedReflectors;\n");
+        source.append("import com.nicleo.kora.core.runtime.MethodInfo;\n");
+        source.append("import com.nicleo.kora.core.runtime.ParameterInfo;\n");
+        source.append("import com.nicleo.kora.core.runtime.RuntimeTypes;\n");
+        source.append("import java.lang.annotation.Annotation;\n");
+        source.append("import java.lang.reflect.Type;\n");
+        source.append("import java.util.concurrent.atomic.AtomicReferenceArray;\n");
+        source.append("import java.util.Collections;\n");
+        source.append("import java.util.LinkedHashSet;\n\n");
         source.append("public final class ").append(generatedSimpleName)
-                .append(" implements com.nicleo.kora.core.runtime.GeneratedReflector<")
+                .append(" implements GeneratedReflector<")
                 .append(entityTypeName).append("> {\n");
-        if (includeFieldsMetadata) {
-            source.append("    private static volatile com.nicleo.kora.core.runtime.FieldInfo[] fields;\n\n");
+        source.append("    private static final Annotation[] NO_ANNOTATIONS = new Annotation[0];\n");
+        source.append("    private static final ParameterInfo[] NO_PARAMS = new ParameterInfo[0];\n");
+        source.append("    private static final MethodInfo[] NO_METHODS = new MethodInfo[0];\n");
+        source.append("    private static volatile ClassInfo classInfo;\n");
+        if (parentReflectType != null) {
+            source.append("    private static volatile GeneratedReflector<")
+                    .append(parentReflectTypeName).append("> parentReflector;\n");
         }
-        if (includeMethodsMetadata) {
-            source.append("    private static volatile com.nicleo.kora.core.runtime.MethodInfo[] methods;\n\n");
+        if (includeFieldsMetadata || includeMethodsMetadata || parentReflectType != null) {
+            source.append('\n');
+        }
+        collectTypeConstants(typeConstants, entityType.getSuperclass());
+        for (VariableElement field : fields) {
+            collectTypeConstants(typeConstants, field.asType());
+        }
+        for (ExecutableElement method : methods) {
+            collectTypeConstants(typeConstants, method.getReturnType());
+            for (VariableElement parameter : method.getParameters()) {
+                collectTypeConstants(typeConstants, parameter.asType());
+            }
+        }
+        int typeIndex = 0;
+        for (String initializer : typeConstants.keySet()) {
+            source.append("    private static final Type TYPE_").append(typeIndex).append(" = ").append(initializer).append(";\n");
+            typeConstants.put(initializer, "TYPE_" + typeIndex);
+            typeIndex++;
+        }
+        this.activeTypeConstants = Map.copyOf(typeConstants);
+        if (!typeConstants.isEmpty()) {
+            source.append('\n');
         }
         if (includeFieldsMetadata) {
-            source.append("    private static com.nicleo.kora.core.runtime.FieldInfo[] initFields() {\n")
-                    .append("        com.nicleo.kora.core.runtime.FieldInfo[] local = fields;\n")
-                    .append("        if (local == null) {\n")
-                    .append("            synchronized (").append(generatedSimpleName).append(".class) {\n")
-                    .append("                local = fields;\n")
-                    .append("                if (local == null) {\n")
-                    .append("                    local = new com.nicleo.kora.core.runtime.FieldInfo[]{\n");
+            source.append("    private static final String[] FIELD_NAMES = new String[]{");
             for (int i = 0; i < fields.size(); i++) {
-                source.append(buildFieldInfoEntry(entityType, fields.get(i), includeAnnotationMetadata));
-                source.append(i + 1 == fields.size() ? '\n' : ",\n");
+                if (i > 0) {
+                    source.append(", ");
+                }
+                source.append('"').append(escapeJava(fields.get(i).getSimpleName().toString())).append('"');
             }
-            source.append("                    };\n")
-                    .append("                    fields = local;\n")
-                    .append("                }\n")
-                    .append("            }\n")
-                    .append("        }\n")
-                    .append("        return local;\n")
-                    .append("    }\n\n");
+            source.append("};\n");
+            if (useLazyMetadata) {
+                source.append("    private static final AtomicReferenceArray<FieldInfo> FIELD_CACHE = new AtomicReferenceArray<>(")
+                        .append(fields.size()).append(");\n");
+            } else {
+                source.append("    private static final FieldInfo[] FIELDS = new FieldInfo[]{\n");
+                for (int i = 0; i < fields.size(); i++) {
+                    source.append(buildFieldInfoEntry(entityType, fields.get(i), false));
+                    source.append(i + 1 == fields.size() ? '\n' : ",\n");
+                }
+                source.append("    };\n");
+            }
+            source.append('\n');
         }
         if (includeMethodsMetadata) {
-            source.append("    private static com.nicleo.kora.core.runtime.MethodInfo[] initMethods() {\n")
-                    .append("        com.nicleo.kora.core.runtime.MethodInfo[] local = methods;\n")
+            source.append("    private static final String[] METHOD_NAMES = new String[]{");
+            int methodNameIndex = 0;
+            for (String methodName : methodsByName.keySet()) {
+                if (methodNameIndex++ > 0) {
+                    source.append(", ");
+                }
+                source.append('"').append(escapeJava(methodName)).append('"');
+            }
+            source.append("};\n");
+            if (useLazyMetadata) {
+                source.append("    private static final AtomicReferenceArray<MethodInfo[]> METHOD_CACHE = new AtomicReferenceArray<>(")
+                        .append(methodsByName.size()).append(");\n");
+            } else {
+                source.append("    private static final MethodInfo[][] METHODS = new MethodInfo[][]{\n");
+                int methodGroupIndex = 0;
+                for (Map.Entry<String, List<ExecutableElement>> entry : methodsByName.entrySet()) {
+                    List<ExecutableElement> groupedMethods = entry.getValue();
+                    source.append("        ");
+                    if (groupedMethods.size() == 1) {
+                        source.append("methodArray(").append(buildMethodInfoEntry(entityType, groupedMethods.getFirst(), false).trim()).append(")");
+                    } else {
+                        source.append("new MethodInfo[]{\n");
+                        for (int i = 0; i < groupedMethods.size(); i++) {
+                            source.append(buildMethodInfoEntry(entityType, groupedMethods.get(i), false));
+                            source.append(i + 1 == groupedMethods.size() ? '\n' : ",\n");
+                        }
+                        source.append("        }");
+                    }
+                    source.append(++methodGroupIndex == methodsByName.size() ? '\n' : ",\n");
+                }
+                source.append("    };\n");
+            }
+            source.append('\n');
+        }
+        if (includeFieldsMetadata && useLazyMetadata) {
+            source.append("    private static FieldInfo initField(int index) {\n")
+                    .append("        FieldInfo local = FIELD_CACHE.get(index);\n")
                     .append("        if (local == null) {\n")
                     .append("            synchronized (").append(generatedSimpleName).append(".class) {\n")
-                    .append("                local = methods;\n")
+                    .append("                local = FIELD_CACHE.get(index);\n")
                     .append("                if (local == null) {\n")
-                    .append("                    local = new com.nicleo.kora.core.runtime.MethodInfo[]{\n");
-            for (int i = 0; i < methods.size(); i++) {
-                source.append(buildMethodInfoEntry(entityType, methods.get(i), includeAnnotationMetadata));
-                source.append(i + 1 == methods.size() ? '\n' : ",\n");
+                    .append("                    local = switch (index) {\n");
+            for (int i = 0; i < fields.size(); i++) {
+                source.append("                        case ").append(i).append(" -> ")
+                        .append(buildFieldInfoEntry(entityType, fields.get(i), includeAnnotationMetadata).trim())
+                        .append(";\n");
             }
-            source.append("                    };\n")
-                    .append("                    methods = local;\n")
+            source.append("                        default -> throw new IllegalArgumentException(\"Unknown field index: \" + index);\n")
+                    .append("                    };\n")
+                    .append("                    FIELD_CACHE.set(index, local);\n")
                     .append("                }\n")
                     .append("            }\n")
                     .append("        }\n")
                     .append("        return local;\n")
                     .append("    }\n\n");
         }
-        source.append("    @Override\n    public ").append(entityTypeName).append(" newInstance() {\n")
-                .append("        return new ").append(entityType.getSimpleName()).append("();\n    }\n\n");
+        if (includeMethodsMetadata && useLazyMetadata) {
+            source.append("    private static MethodInfo[] initMethods(int index) {\n")
+                    .append("        MethodInfo[] local = METHOD_CACHE.get(index);\n")
+                    .append("        if (local == null) {\n")
+                    .append("            synchronized (").append(generatedSimpleName).append(".class) {\n")
+                    .append("                local = METHOD_CACHE.get(index);\n")
+                    .append("                if (local == null) {\n")
+                    .append("                    local = switch (index) {\n");
+            int methodIndex = 0;
+            for (Map.Entry<String, List<ExecutableElement>> entry : methodsByName.entrySet()) {
+                List<ExecutableElement> groupedMethods = entry.getValue();
+                source.append("                        case ").append(methodIndex++).append(" -> ");
+                if (groupedMethods.size() == 1) {
+                    source.append("methodArray(").append(buildMethodInfoEntry(entityType, groupedMethods.getFirst(), includeAnnotationMetadata).trim()).append(");\n");
+                } else {
+                    source.append("new MethodInfo[]{\n");
+                    for (int i = 0; i < groupedMethods.size(); i++) {
+                        source.append(buildMethodInfoEntry(entityType, groupedMethods.get(i), includeAnnotationMetadata));
+                        source.append(i + 1 == groupedMethods.size() ? '\n' : ",\n");
+                    }
+                    source.append("                        };\n");
+                }
+            }
+            source.append("                        default -> throw new IllegalArgumentException(\"Unknown method index: \" + index);\n")
+                    .append("                    };\n")
+                    .append("                    METHOD_CACHE.set(index, local);\n")
+                    .append("                }\n")
+                    .append("            }\n")
+                    .append("        }\n")
+                    .append("        return local;\n")
+                    .append("    }\n\n");
+        }
+        source.append("    private static MethodInfo[] methodArray(MethodInfo methodInfo) {\n")
+                .append("        return new MethodInfo[]{methodInfo};\n")
+                .append("    }\n\n");
+        source.append("    private static ParameterInfo[] parameterArray(ParameterInfo parameterInfo) {\n")
+                .append("        return new ParameterInfo[]{parameterInfo};\n")
+                .append("    }\n\n");
+        source.append("    private static ParameterInfo parameter(String name, Type type) {\n")
+                .append("        return new ParameterInfo(name, type, NO_ANNOTATIONS);\n")
+                .append("    }\n\n");
+        source.append("    private static ClassInfo initClassInfo() {\n")
+                .append("        ClassInfo local = classInfo;\n")
+                .append("        if (local == null) {\n")
+                .append("            synchronized (").append(generatedSimpleName).append(".class) {\n")
+                .append("                local = classInfo;\n")
+                .append("                if (local == null) {\n")
+                .append("                    local = new ClassInfo(")
+                .append(entityTypeName).append(".class, ")
+                .append(renderNullableTypeLiteral(entityType.getSuperclass())).append(", ")
+                .append(modifierMask(entityType.getModifiers())).append(", ")
+                .append(renderAnnotationArray(entityType.getAnnotationMirrors(), includeAnnotationMetadata)).append(");\n")
+                .append("                    classInfo = local;\n")
+                .append("                }\n")
+                .append("            }\n")
+                .append("        }\n")
+                .append("        return local;\n")
+                .append("    }\n\n");
+        if (parentReflectType != null) {
+            source.append("    private static GeneratedReflector<").append(parentReflectTypeName).append("> parentReflector() {\n")
+                    .append("        GeneratedReflector<").append(parentReflectTypeName).append("> local = parentReflector;\n")
+                    .append("        if (local == null) {\n")
+                    .append("            synchronized (").append(generatedSimpleName).append(".class) {\n")
+                    .append("                local = parentReflector;\n")
+                    .append("                if (local == null) {\n")
+                    .append("                    local = GeneratedReflectors.get(").append(parentReflectTypeName).append(".class);\n")
+                    .append("                    parentReflector = local;\n")
+                    .append("                }\n")
+                    .append("            }\n")
+                    .append("        }\n")
+                    .append("        return local;\n")
+                    .append("    }\n\n");
+        }
+        if (parentReflectType != null && includeFieldsMetadata) {
+            source.append("    private static volatile String[] mergedFieldNames;\n");
+        }
+        if (parentReflectType != null && includeMethodsMetadata) {
+            source.append("    private static volatile String[] mergedMethodNames;\n");
+        }
+        if (parentReflectType != null && (includeFieldsMetadata || includeMethodsMetadata)) {
+            source.append('\n');
+            source.append("    private static String[] mergeNames(String[] currentNames, String[] inheritedNames) {\n")
+                    .append("        if (currentNames.length == 0) {\n")
+                    .append("            return inheritedNames.clone();\n")
+                    .append("        }\n")
+                    .append("        if (inheritedNames.length == 0) {\n")
+                    .append("            return currentNames.clone();\n")
+                    .append("        }\n")
+                    .append("        LinkedHashSet<String> names = new LinkedHashSet<>();\n")
+                    .append("        Collections.addAll(names, currentNames);\n")
+                    .append("        Collections.addAll(names, inheritedNames);\n")
+                    .append("        return names.toArray(new String[0]);\n")
+                    .append("    }\n\n");
+            if (includeMethodsMetadata) {
+                source.append("    private static MethodInfo[] mergeMethodInfoArrays(MethodInfo[] currentMethods, MethodInfo[] inheritedMethods) {\n")
+                        .append("        if (currentMethods.length == 0) {\n")
+                        .append("            return inheritedMethods;\n")
+                        .append("        }\n")
+                        .append("        if (inheritedMethods.length == 0) {\n")
+                        .append("            return currentMethods;\n")
+                        .append("        }\n")
+                        .append("        MethodInfo[] merged = new MethodInfo[currentMethods.length + inheritedMethods.length];\n")
+                        .append("        System.arraycopy(currentMethods, 0, merged, 0, currentMethods.length);\n")
+                        .append("        System.arraycopy(inheritedMethods, 0, merged, currentMethods.length, inheritedMethods.length);\n")
+                        .append("        return merged;\n")
+                        .append("    }\n\n");
+            }
+            if (includeFieldsMetadata) {
+                source.append("    private static String[] mergedFieldNames() {\n")
+                        .append("        String[] local = mergedFieldNames;\n")
+                        .append("        if (local == null) {\n")
+                        .append("            synchronized (").append(generatedSimpleName).append(".class) {\n")
+                        .append("                local = mergedFieldNames;\n")
+                        .append("                if (local == null) {\n")
+                        .append("                    local = mergeNames(FIELD_NAMES, parentReflector().getFields());\n")
+                        .append("                    mergedFieldNames = local;\n")
+                        .append("                }\n")
+                        .append("            }\n")
+                        .append("        }\n")
+                        .append("        return local.clone();\n")
+                        .append("    }\n\n");
+            }
+            if (includeMethodsMetadata) {
+                source.append("    private static String[] mergedMethodNames() {\n")
+                        .append("        String[] local = mergedMethodNames;\n")
+                        .append("        if (local == null) {\n")
+                        .append("            synchronized (").append(generatedSimpleName).append(".class) {\n")
+                        .append("                local = mergedMethodNames;\n")
+                        .append("                if (local == null) {\n")
+                        .append("                    local = mergeNames(METHOD_NAMES, parentReflector().getMethods());\n")
+                        .append("                    mergedMethodNames = local;\n")
+                        .append("                }\n")
+                        .append("            }\n")
+                        .append("        }\n")
+                        .append("        return local.clone();\n")
+                        .append("    }\n\n");
+            }
+        }
+        source.append("    @Override\n    public ").append(entityTypeName).append(" newInstance() {\n");
+        if (canInstantiate(entityType)) {
+            source.append("        return new ").append(entityType.getSimpleName()).append("();\n");
+        } else {
+            source.append("        throw new UnsupportedOperationException(\"Type cannot be instantiated without accessible no-arg constructor: ")
+                    .append(entityTypeName)
+                    .append("\");\n");
+        }
+        source.append("    }\n\n");
+        source.append("    @Override\n    public ClassInfo getClassInfo() {\n")
+                .append("        return initClassInfo();\n")
+                .append("    }\n\n");
         source.append("    @Override\n    public Object invoke(").append(entityTypeName).append(" target, String method, Object[] args) {\n")
                 .append("        if (method == null) {\n")
                 .append("            throw new java.lang.IllegalArgumentException(\"method must not be null\");\n")
@@ -386,77 +669,161 @@ public class KoraProcessor extends AbstractProcessor {
             source.append(buildInvokeCase(method));
         }
         source.append("            default:\n")
-                .append("                throw new java.lang.IllegalArgumentException(\"Unknown method: \" + method);\n")
+                .append(parentReflectType != null
+                        ? "                return parentReflector().invoke((" + parentReflectTypeName + ") target, method, args);\n"
+                        : "                throw new java.lang.IllegalArgumentException(\"Unknown method: \" + method);\n")
                 .append("        }\n    }\n\n");
         source.append("    @Override\n    public void set(").append(entityTypeName).append(" target, String property, Object value) {\n")
                 .append("        switch (property) {\n");
         for (VariableElement field : fields) {
             source.append(buildSetCase(entityType, field));
         }
-        source.append("            default:\n                return;\n        }\n    }\n\n");
+        source.append("            default:\n")
+                .append(parentReflectType != null
+                        ? "                parentReflector().set((" + parentReflectTypeName + ") target, property, value);\n                return;\n"
+                        : "                return;\n")
+                .append("        }\n    }\n\n");
         source.append("    @Override\n    public Object get(").append(entityTypeName).append(" target, String property) {\n")
                 .append("        switch (property) {\n");
         for (VariableElement field : fields) {
             source.append(buildGetCase(entityType, field));
         }
-        source.append("            default:\n                throw new java.lang.IllegalArgumentException(\"Unknown property: \" + property);\n")
+        source.append("            default:\n")
+                .append(parentReflectType != null
+                        ? "                return parentReflector().get((" + parentReflectTypeName + ") target, property);\n"
+                        : "                throw new java.lang.IllegalArgumentException(\"Unknown property: \" + property);\n")
                 .append("        }\n    }\n\n");
-        source.append("    @Override\n    public com.nicleo.kora.core.runtime.FieldInfo[] getFields() {\n")
+        source.append("    @Override\n    public String[] getFields() {\n")
                 .append(includeFieldsMetadata
-                        ? "        return initFields().clone();\n"
-                        : "        return new com.nicleo.kora.core.runtime.FieldInfo[0];\n")
+                        ? parentReflectType != null
+                            ? "        return mergedFieldNames();\n"
+                            : "        return FIELD_NAMES.clone();\n"
+                        : parentReflectType != null
+                            ? "        return parentReflector().getFields();\n"
+                            : "        return new String[0];\n")
                 .append("    }\n\n");
-        source.append("    @Override\n    public com.nicleo.kora.core.runtime.FieldInfo getField(String field) {\n")
+        source.append("    @Override\n    public boolean hasField(String field) {\n")
                 .append(includeFieldsMetadata
-                        ? "        for (com.nicleo.kora.core.runtime.FieldInfo candidate : initFields()) {\n"
-                        : "        return null;\n")
+                        ? "        if (field == null) {\n            return false;\n        }\n        return switch (field) {\n"
+                        : parentReflectType != null
+                            ? "        return field != null && parentReflector().hasField(field);\n"
+                            : "        return false;\n")
                 .append(includeFieldsMetadata
-                        ? "            if (candidate.name().equals(field)) {\n" +
-                          "                return candidate;\n" +
-                          "            }\n" +
-                          "        }\n" +
-                          "        return null;\n"
+                        ? buildFieldPresenceSwitch(fields, "            ", parentReflectType != null ? "parentReflector().hasField(field)" : "false")
+                        : "")
+                .append(includeFieldsMetadata
+                        ? "        };\n"
                         : "")
                 .append("    }\n\n");
-        source.append("    @Override\n    public com.nicleo.kora.core.runtime.MethodInfo[] getMethods() {\n")
-                .append(includeMethodsMetadata
-                        ? "        return initMethods().clone();\n"
-                        : "        return new com.nicleo.kora.core.runtime.MethodInfo[0];\n")
+        source.append("    @Override\n    public FieldInfo getField(String field) {\n")
+                .append(includeFieldsMetadata
+                        ? "        if (field == null) {\n            return null;\n        }\n        return switch (field) {\n"
+                        : parentReflectType != null
+                            ? "        return field == null ? null : parentReflector().getField(field);\n"
+                            : "        return null;\n")
+                .append(includeFieldsMetadata
+                        ? buildFieldInfoSwitch(fields, "            ", parentReflectType != null ? "parentReflector().getField(field)" : "null", useLazyMetadata)
+                        : "")
+                .append(includeFieldsMetadata
+                        ? "        };\n"
+                        : "")
                 .append("    }\n\n");
-        source.append("    @Override\n    public com.nicleo.kora.core.runtime.MethodInfo[] getMethod(String name) {\n")
+        source.append("    @Override\n    public String[] getMethods() {\n")
                 .append(includeMethodsMetadata
-                        ? "        java.util.List<com.nicleo.kora.core.runtime.MethodInfo> matches = new java.util.ArrayList<>();\n" +
-                          "        for (com.nicleo.kora.core.runtime.MethodInfo candidate : initMethods()) {\n" +
-                          "            if (candidate.name().equals(name)) {\n" +
-                          "                matches.add(candidate);\n" +
-                          "            }\n" +
-                          "        }\n" +
-                          "        return matches.toArray(new com.nicleo.kora.core.runtime.MethodInfo[0]);\n"
-                        : "        return new com.nicleo.kora.core.runtime.MethodInfo[0];\n")
+                        ? parentReflectType != null
+                            ? "        return mergedMethodNames();\n"
+                            : "        return METHOD_NAMES.clone();\n"
+                        : parentReflectType != null
+                            ? "        return parentReflector().getMethods();\n"
+                            : "        return new String[0];\n")
+                .append("    }\n\n");
+        source.append("    @Override\n    public boolean hasMethod(String name) {\n")
+                .append(includeMethodsMetadata
+                        ? "        if (name == null) {\n            return false;\n        }\n        return switch (name) {\n"
+                        : parentReflectType != null
+                            ? "        return name != null && parentReflector().hasMethod(name);\n"
+                            : "        return false;\n")
+                .append(includeMethodsMetadata
+                        ? buildMethodPresenceSwitch(methodsByName, "            ", parentReflectType != null ? "parentReflector().hasMethod(name)" : "false")
+                        : "")
+                .append(includeMethodsMetadata
+                        ? "        };\n"
+                        : "")
+                .append("    }\n\n");
+        source.append("    @Override\n    public MethodInfo[] getMethod(String name) {\n")
+                .append(includeMethodsMetadata
+                        ? "        if (name == null) {\n            return NO_METHODS;\n        }\n        return switch (name) {\n"
+                        : parentReflectType != null
+                            ? "        return name == null ? NO_METHODS : parentReflector().getMethod(name);\n"
+                            : "        return NO_METHODS;\n")
+                .append(includeMethodsMetadata
+                        ? buildMethodInfoArraySwitch(methodsByName, "            ", parentReflectType != null ? "parentReflector().getMethod(name)" : "NO_METHODS", useLazyMetadata, parentReflectType != null)
+                        : "")
+                .append(includeMethodsMetadata
+                        ? "        };\n"
+                        : "")
                 .append("    }\n}\n");
+        String generated = source.toString();
+        this.activeTypeConstants = Map.of();
+        return generated;
+    }
+
+    private String buildFieldPresenceSwitch(List<VariableElement> fields, String indent, String defaultExpression) {
+        StringBuilder source = new StringBuilder();
+        for (VariableElement field : fields) {
+            source.append(indent).append("case \"").append(field.getSimpleName()).append("\" -> true;\n");
+        }
+        source.append(indent).append("default -> ").append(defaultExpression).append(";\n");
+        return source.toString();
+    }
+
+    private String buildFieldInfoSwitch(List<VariableElement> fields, String indent, String defaultExpression, boolean useLazyMetadata) {
+        StringBuilder source = new StringBuilder();
+        for (int i = 0; i < fields.size(); i++) {
+            source.append(indent).append("case \"").append(fields.get(i).getSimpleName()).append("\" -> ")
+                    .append(useLazyMetadata ? "initField(" + i + ")" : "FIELDS[" + i + "]")
+                    .append(";\n");
+        }
+        source.append(indent).append("default -> ").append(defaultExpression).append(";\n");
+        return source.toString();
+    }
+
+    private String buildMethodPresenceSwitch(Map<String, List<ExecutableElement>> methodsByName, String indent, String defaultExpression) {
+        StringBuilder source = new StringBuilder();
+        for (String methodName : methodsByName.keySet()) {
+            source.append(indent).append("case \"").append(methodName).append("\" -> true;\n");
+        }
+        source.append(indent).append("default -> ").append(defaultExpression).append(";\n");
+        return source.toString();
+    }
+
+    private String buildMethodInfoArraySwitch(Map<String, List<ExecutableElement>> methodsByName, String indent, String defaultExpression, boolean useLazyMetadata, boolean mergeInheritedMethods) {
+        StringBuilder source = new StringBuilder();
+        int index = 0;
+        for (String methodName : methodsByName.keySet()) {
+            int currentIndex = index++;
+            String localExpression = useLazyMetadata ? "initMethods(" + currentIndex + ")" : "METHODS[" + currentIndex + "]";
+            source.append(indent).append("case \"").append(methodName).append("\" -> ")
+                    .append(mergeInheritedMethods
+                            ? "mergeMethodInfoArrays(" + localExpression + ", parentReflector().getMethod(name))"
+                            : localExpression)
+                    .append(";\n");
+        }
+        source.append(indent).append("default -> ").append(defaultExpression).append(";\n");
         return source.toString();
     }
 
     private String buildFieldInfoEntry(TypeElement entityType, VariableElement field, boolean includeAnnotationMetadata) {
         String fieldName = field.getSimpleName().toString();
-        ExecutableElement getter = findMethod(entityType, "get" + capitalize(fieldName), 0);
-        ExecutableElement booleanGetter = findMethod(entityType, "is" + capitalize(fieldName), 0);
-        ExecutableElement setter = findMethod(entityType, "set" + capitalize(fieldName), 1);
-        String getterName = getter != null ? getter.getSimpleName().toString()
-                : booleanGetter != null ? booleanGetter.getSimpleName().toString()
-                : null;
-        String setterName = setter != null ? setter.getSimpleName().toString() : null;
-        return "        new com.nicleo.kora.core.runtime.FieldInfo(\"" + fieldName + "\", "
+        return "        new FieldInfo(\"" + fieldName + "\", "
                 + renderTypeLiteral(field.asType()) + ", "
                 + modifierMask(field.getModifiers()) + ", "
-                + renderNullableString(getterName) + ", "
-                + renderNullableString(setterName) + ", "
                 + renderAnnotationArray(field.getAnnotationMirrors(), includeAnnotationMetadata) + ")";
     }
 
     private String buildMethodInfoEntry(TypeElement entityType, ExecutableElement method, boolean includeAnnotationMetadata) {
         String methodName = method.getSimpleName().toString();
-        return "        new com.nicleo.kora.core.runtime.MethodInfo(\"" + methodName + "\", "
+        return "new MethodInfo(\"" + methodName + "\", "
                 + renderTypeLiteral(method.getReturnType()) + ", "
                 + modifierMask(method.getModifiers()) + ", "
                 + renderParameterInfoArray(method, includeAnnotationMetadata) + ", "
@@ -465,13 +832,23 @@ public class KoraProcessor extends AbstractProcessor {
 
     private String renderParameterInfoArray(ExecutableElement method, boolean includeAnnotationMetadata) {
         List<? extends VariableElement> parameters = method.getParameters();
-        StringBuilder builder = new StringBuilder("new com.nicleo.kora.core.runtime.ParameterInfo[]{");
+        if (parameters.isEmpty()) {
+            return "NO_PARAMS";
+        }
+        if (parameters.size() == 1) {
+            VariableElement parameter = parameters.getFirst();
+            String annotations = renderAnnotationArray(parameter.getAnnotationMirrors(), includeAnnotationMetadata);
+            if ("NO_ANNOTATIONS".equals(annotations)) {
+                return "parameterArray(parameter(\"" + parameter.getSimpleName() + "\", " + renderTypeLiteral(parameter.asType()) + "))";
+            }
+        }
+        StringBuilder builder = new StringBuilder("new ParameterInfo[]{");
         for (int i = 0; i < parameters.size(); i++) {
             if (i > 0) {
                 builder.append(", ");
             }
             VariableElement parameter = parameters.get(i);
-            builder.append("new com.nicleo.kora.core.runtime.ParameterInfo(\"")
+            builder.append("new ParameterInfo(\"")
                     .append(parameter.getSimpleName()).append("\", ")
                     .append(renderTypeLiteral(parameter.asType())).append(", ")
                     .append(renderAnnotationArray(parameter.getAnnotationMirrors(), includeAnnotationMetadata)).append(")");
@@ -481,7 +858,17 @@ public class KoraProcessor extends AbstractProcessor {
     }
 
     private String renderTypeLiteral(TypeMirror typeMirror) {
-        return classLiteral(typeMirror);
+        if (typeMirror == null) {
+            return "null";
+        }
+        return switch (typeMirror.getKind()) {
+            case BOOLEAN, BYTE, SHORT, INT, LONG, CHAR, FLOAT, DOUBLE -> classLiteral(typeMirror);
+            case ARRAY -> renderArrayTypeLiteral((ArrayType) typeMirror);
+            case TYPEVAR -> renderTypeVariableLiteral((javax.lang.model.type.TypeVariable) typeMirror);
+            case WILDCARD -> renderWildcardTypeLiteral((WildcardType) typeMirror);
+            case DECLARED -> renderDeclaredTypeLiteral((DeclaredType) typeMirror);
+            default -> classLiteral(typeMirror);
+        };
     }
 
     private String classLiteral(TypeMirror typeMirror) {
@@ -498,6 +885,120 @@ public class KoraProcessor extends AbstractProcessor {
             case ARRAY -> erasedType + ".class";
             case TYPEVAR -> "java.lang.Object.class";
             default -> erasedType + ".class";
+        };
+    }
+
+    private String renderArrayTypeLiteral(ArrayType arrayType) {
+        TypeMirror componentType = arrayType.getComponentType();
+        if (isReifiable(componentType)) {
+            return classLiteral(arrayType);
+        }
+        return internTypeLiteral("RuntimeTypes.array(" + renderTypeLiteral(componentType) + ")");
+    }
+
+    private String renderDeclaredTypeLiteral(DeclaredType declaredType) {
+        if (declaredType.getTypeArguments().isEmpty()) {
+            return classLiteral(declaredType);
+        }
+        String ownerType = declaredType.getEnclosingType() == null || declaredType.getEnclosingType().getKind() == TypeKind.NONE
+                ? "null"
+                : renderTypeLiteral(declaredType.getEnclosingType());
+        String actualTypes = declaredType.getTypeArguments().stream()
+                .map(this::renderTypeLiteral)
+                .collect(Collectors.joining(", "));
+        return internTypeLiteral("RuntimeTypes.parameterized(" + classLiteral(declaredType) + ", " + ownerType
+                + (actualTypes.isEmpty() ? "" : ", " + actualTypes) + ")");
+    }
+
+    private String renderTypeVariableLiteral(javax.lang.model.type.TypeVariable typeVariable) {
+        TypeMirror upperBound = typeVariable.getUpperBound();
+        if (upperBound != null && upperBound.getKind() != TypeKind.NULL && upperBound.getKind() != TypeKind.NONE) {
+            return internTypeLiteral("RuntimeTypes.typeVariable(\"" + escapeJava(typeVariable.asElement().getSimpleName().toString()) + "\", "
+                    + renderTypeLiteral(upperBound) + ")");
+        }
+        return internTypeLiteral("RuntimeTypes.typeVariable(\"" + escapeJava(typeVariable.asElement().getSimpleName().toString()) + "\", Object.class)");
+    }
+
+    private String renderWildcardTypeLiteral(WildcardType wildcardType) {
+        String upperBounds = wildcardType.getExtendsBound() == null
+                ? "new Type[]{Object.class}"
+                : "new Type[]{" + renderTypeLiteral(wildcardType.getExtendsBound()) + "}";
+        String lowerBounds = wildcardType.getSuperBound() == null
+                ? "new Type[0]"
+                : "new Type[]{" + renderTypeLiteral(wildcardType.getSuperBound()) + "}";
+        return internTypeLiteral("RuntimeTypes.wildcard(" + upperBounds + ", " + lowerBounds + ")");
+    }
+
+    private void collectTypeConstants(Map<String, String> typeConstants, TypeMirror typeMirror) {
+        if (typeMirror == null || typeMirror.getKind() == TypeKind.NONE) {
+            return;
+        }
+        switch (typeMirror.getKind()) {
+            case ARRAY -> {
+                ArrayType arrayType = (ArrayType) typeMirror;
+                if (!isReifiable(arrayType.getComponentType())) {
+                    typeConstants.putIfAbsent("RuntimeTypes.array(" + renderTypeLiteral(arrayType.getComponentType()) + ")", "");
+                }
+                collectTypeConstants(typeConstants, arrayType.getComponentType());
+            }
+            case DECLARED -> {
+                DeclaredType declaredType = (DeclaredType) typeMirror;
+                for (TypeMirror typeArgument : declaredType.getTypeArguments()) {
+                    collectTypeConstants(typeConstants, typeArgument);
+                }
+                if (!declaredType.getTypeArguments().isEmpty()) {
+                    String ownerType = declaredType.getEnclosingType() == null || declaredType.getEnclosingType().getKind() == TypeKind.NONE
+                            ? "null"
+                            : renderTypeLiteral(declaredType.getEnclosingType());
+                    String actualTypes = declaredType.getTypeArguments().stream()
+                            .map(this::renderTypeLiteral)
+                            .collect(Collectors.joining(", "));
+                    typeConstants.putIfAbsent("RuntimeTypes.parameterized(" + classLiteral(declaredType) + ", " + ownerType
+                            + (actualTypes.isEmpty() ? "" : ", " + actualTypes) + ")", "");
+                }
+            }
+            case TYPEVAR -> {
+                javax.lang.model.type.TypeVariable typeVariable = (javax.lang.model.type.TypeVariable) typeMirror;
+                TypeMirror upperBound = typeVariable.getUpperBound();
+                if (upperBound != null && upperBound.getKind() != TypeKind.NULL && upperBound.getKind() != TypeKind.NONE) {
+                    collectTypeConstants(typeConstants, upperBound);
+                    typeConstants.putIfAbsent("RuntimeTypes.typeVariable(\"" + escapeJava(typeVariable.asElement().getSimpleName().toString()) + "\", "
+                            + renderTypeLiteral(upperBound) + ")", "");
+                } else {
+                    typeConstants.putIfAbsent("RuntimeTypes.typeVariable(\"" + escapeJava(typeVariable.asElement().getSimpleName().toString()) + "\", Object.class)", "");
+                }
+            }
+            case WILDCARD -> {
+                WildcardType wildcardType = (WildcardType) typeMirror;
+                if (wildcardType.getExtendsBound() != null) {
+                    collectTypeConstants(typeConstants, wildcardType.getExtendsBound());
+                }
+                if (wildcardType.getSuperBound() != null) {
+                    collectTypeConstants(typeConstants, wildcardType.getSuperBound());
+                }
+                String upperBounds = wildcardType.getExtendsBound() == null
+                        ? "new Type[]{Object.class}"
+                        : "new Type[]{" + renderTypeLiteral(wildcardType.getExtendsBound()) + "}";
+                String lowerBounds = wildcardType.getSuperBound() == null
+                        ? "new Type[0]"
+                        : "new Type[]{" + renderTypeLiteral(wildcardType.getSuperBound()) + "}";
+                typeConstants.putIfAbsent("RuntimeTypes.wildcard(" + upperBounds + ", " + lowerBounds + ")", "");
+            }
+            default -> {
+            }
+        }
+    }
+
+    private String internTypeLiteral(String initializer) {
+        return this.activeTypeConstants.getOrDefault(initializer, initializer);
+    }
+
+    private boolean isReifiable(TypeMirror typeMirror) {
+        return switch (typeMirror.getKind()) {
+            case BOOLEAN, BYTE, SHORT, INT, LONG, CHAR, FLOAT, DOUBLE -> true;
+            case ARRAY -> isReifiable(((ArrayType) typeMirror).getComponentType());
+            case DECLARED -> typeMirror instanceof DeclaredType declaredType && declaredType.getTypeArguments().isEmpty();
+            default -> false;
         };
     }
 
@@ -519,13 +1020,13 @@ public class KoraProcessor extends AbstractProcessor {
 
     private String renderAnnotationArray(List<? extends AnnotationMirror> annotations, boolean includeAnnotationMetadata) {
         if (!includeAnnotationMetadata) {
-            return "new java.lang.annotation.Annotation[0]";
+            return "NO_ANNOTATIONS";
         }
         List<? extends AnnotationMirror> runtimeAnnotations = annotations.stream()
                 .filter(this::isRuntimeVisibleAnnotation)
                 .toList();
         if (runtimeAnnotations.isEmpty()) {
-            return "new java.lang.annotation.Annotation[0]";
+            return "NO_ANNOTATIONS";
         }
         StringBuilder builder = new StringBuilder("new java.lang.annotation.Annotation[]{");
         for (int i = 0; i < runtimeAnnotations.size(); i++) {
@@ -687,39 +1188,41 @@ public class KoraProcessor extends AbstractProcessor {
     }
 
     private String buildMapperSource(String packageName, String generatedSimpleName, TypeElement mapperType, MapperXmlDefinition xmlDefinition, String supportClassName) {
+        List<MapperMethodSpec> mapperMethods = mapperMethods(mapperType, xmlDefinition);
+        List<MapperCapabilityDelegateSpec> capabilityDelegates = mapperCapabilityDelegates(mapperType, mapperMethods);
+        String mapperEntityTypeLiteral = mapperEntityTypeLiteral(mapperType);
         StringBuilder source = new StringBuilder();
         if (!packageName.isEmpty()) {
             source.append("package ").append(packageName).append(";\n\n");
         }
         source.append("public final class ").append(generatedSimpleName)
-                .append(" implements ").append(mapperType.getQualifiedName()).append(" {\n")
-                .append("    private final ").append(SQL_SESSION).append(" sqlSession;\n\n");
-        for (Element enclosedElement : mapperType.getEnclosedElements()) {
-            if (enclosedElement.getKind() == ElementKind.METHOD && !enclosedElement.getModifiers().contains(Modifier.DEFAULT)) {
-                ExecutableElement method = (ExecutableElement) enclosedElement;
-                SqlNodeDefinition statement = xmlDefinition.getStatements().get(method.getSimpleName().toString());
-                if (statement == null) {
-                    throw new ProcessorException("No xml statement found for method: " + method.getSimpleName());
-                }
-                source.append("    private static final com.nicleo.kora.core.dynamic.DynamicSqlNode ")
-                        .append(statementFieldName(statement.id()))
+                .append(" extends com.nicleo.kora.core.runtime.AbstractMapper<").append(mapperEntityTypeLiteral).append(">")
+                .append(" implements ").append(mapperType.getQualifiedName()).append(" {\n\n");
+        for (MapperCapabilityDelegateSpec delegate : capabilityDelegates) {
+            source.append("    private final ").append(delegate.interfaceTypeLiteral()).append(' ')
+                    .append(delegate.fieldName()).append(";\n\n");
+        }
+        for (MapperMethodSpec mapperMethod : mapperMethods) {
+            source.append("    private static final com.nicleo.kora.core.dynamic.DynamicSqlNode ")
+                        .append(statementFieldName(mapperMethod.statement().id()))
                         .append(" = ")
-                        .append(renderSqlNode(statement.rootSqlNode()))
+                        .append(renderSqlNode(mapperMethod.statement().rootSqlNode()))
                         .append(";\n\n");
-            }
         }
         source.append("    public ").append(generatedSimpleName).append('(').append(SQL_SESSION).append(" sqlSession) {\n")
-                .append("        ").append(supportClassName).append(".install();\n")
-                .append("        this.sqlSession = sqlSession;\n")
-                .append("    }\n\n");
-        for (Element enclosedElement : mapperType.getEnclosedElements()) {
-            if (enclosedElement.getKind() == ElementKind.METHOD && !enclosedElement.getModifiers().contains(Modifier.DEFAULT)) {
-                ExecutableElement method = (ExecutableElement) enclosedElement;
-                SqlNodeDefinition statement = xmlDefinition.getStatements().get(method.getSimpleName().toString());
-                if (statement == null) {
-                    throw new ProcessorException("No xml statement found for method: " + method.getSimpleName());
-                }
-                source.append(buildMethod(mapperType, method, statement));
+                .append("        super(sqlSession, ").append(mapperEntityTypeLiteral).append(".class);\n")
+                .append("        ").append(supportClassName).append(".install();\n");
+        for (MapperCapabilityDelegateSpec delegate : capabilityDelegates) {
+            source.append("        this.").append(delegate.fieldName()).append(" = ")
+                    .append(delegate.instantiation()).append(";\n");
+        }
+        source.append("    }\n\n");
+        for (MapperMethodSpec mapperMethod : mapperMethods) {
+            source.append(buildMethod(mapperType, mapperMethod.method(), mapperMethod.statement()));
+        }
+        for (MapperCapabilityDelegateSpec delegate : capabilityDelegates) {
+            for (MapperCapabilityMethodSpec method : delegate.methods()) {
+                source.append(buildCapabilityMethod(method, delegate.fieldName()));
             }
         }
         source.append("}\n");
@@ -762,6 +1265,17 @@ public class KoraProcessor extends AbstractProcessor {
         return builder.toString();
     }
 
+    private String renderParameters(List<String> parameterTypes, List<String> parameterNames) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < parameterTypes.size(); i++) {
+            if (i > 0) {
+                builder.append(", ");
+            }
+            builder.append(parameterTypes.get(i)).append(' ').append(parameterNames.get(i));
+        }
+        return builder.toString();
+    }
+
     private String renderParameterNames(ExecutableElement method) {
         StringBuilder builder = new StringBuilder("new String[]{");
         List<? extends VariableElement> parameters = method.getParameters();
@@ -788,13 +1302,42 @@ public class KoraProcessor extends AbstractProcessor {
         return builder.toString();
     }
 
+    private String renderParameterValues(List<String> parameterNames) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < parameterNames.size(); i++) {
+            if (i > 0) {
+                builder.append(", ");
+            }
+            builder.append(parameterNames.get(i));
+        }
+        return builder.toString();
+    }
+
+    private String buildCapabilityMethod(MapperCapabilityMethodSpec method, String fieldName) {
+        StringBuilder source = new StringBuilder();
+        source.append("    @Override\n")
+                .append("    public ").append(method.returnType()).append(' ').append(method.methodName()).append('(')
+                .append(renderParameters(method.parameterTypes(), method.parameterNames())).append(") {\n")
+                .append("        ");
+        if (!"void".equals(method.returnType())) {
+            source.append("return ");
+        }
+        source.append(fieldName).append('.').append(method.methodName()).append('(')
+                .append(renderParameterValues(method.parameterNames())).append(");\n");
+        if ("void".equals(method.returnType())) {
+            source.append("        return;\n");
+        }
+        source.append("    }\n\n");
+        return source.toString();
+    }
+
     private String renderExecution(TypeElement mapperType, ExecutableElement method, SqlNodeDefinition statement) {
         SqlCommandType commandType = statement.commandType();
         TypeMirror returnType = method.getReturnType();
         if (commandType == SqlCommandType.SELECT) {
             if (isListReturn(returnType)) {
-                String elementType = extractListElementType(returnType);
-                reflectSpecFor(typeElementOf(elementType));
+                TypeMirror elementType = extractListElementType(returnType);
+                reflectSpecFor(asTypeElement(elementType));
                 return "        return sqlSession.selectList(sql, args, context, " + elementType + ".class);\n";
             }
             if (returnType.getKind() == TypeKind.VOID) {
@@ -836,9 +1379,77 @@ public class KoraProcessor extends AbstractProcessor {
                 && declaredType.getTypeArguments().size() == 1;
     }
 
-    private String extractListElementType(TypeMirror returnType) {
+    private TypeMirror extractListElementType(TypeMirror returnType) {
         DeclaredType declaredType = (DeclaredType) returnType;
-        return declaredType.getTypeArguments().get(0).toString();
+        return declaredType.getTypeArguments().get(0);
+    }
+
+    private void registerMapperMethodReflectTypes(ExecutableElement method, SqlNodeDefinition statement) {
+        if (statement.commandType() == SqlCommandType.SELECT) {
+            TypeMirror returnType = method.getReturnType();
+            if (isListReturn(returnType)) {
+                registerReflectTypes(((DeclaredType) returnType).getTypeArguments().getFirst());
+            } else if (returnType.getKind() != TypeKind.VOID && !returnType.getKind().isPrimitive()) {
+                registerReflectTypes(returnType);
+            }
+        }
+        for (VariableElement parameter : method.getParameters()) {
+            registerReflectTypes(parameter.asType());
+        }
+    }
+
+    private void registerReflectTypes(TypeMirror typeMirror) {
+        registerReflectTypes(typeMirror, new HashSet<>());
+    }
+
+    private void registerReflectTypes(TypeMirror typeMirror, Set<String> visiting) {
+        if (typeMirror == null) {
+            return;
+        }
+        if (typeMirror instanceof DeclaredType declaredType) {
+            TypeElement typeElement = asTypeElement(typeMirror);
+            if (typeElement != null && shouldAutoReflect(typeElement)) {
+                registerReflectType(typeElement, visiting);
+            }
+            for (TypeMirror typeArgument : declaredType.getTypeArguments()) {
+                registerReflectTypes(typeArgument, visiting);
+            }
+            return;
+        }
+        if (typeMirror instanceof ArrayType arrayType) {
+            registerReflectTypes(arrayType.getComponentType(), visiting);
+            return;
+        }
+        if (typeMirror instanceof WildcardType wildcardType) {
+            registerReflectTypes(wildcardType.getExtendsBound(), visiting);
+            registerReflectTypes(wildcardType.getSuperBound(), visiting);
+        }
+    }
+
+    private void registerReflectType(TypeElement typeElement, Set<String> visiting) {
+        String qualifiedName = typeElement.getQualifiedName().toString();
+        if (!visiting.add(qualifiedName)) {
+            return;
+        }
+        reflectSpecs.putIfAbsent(qualifiedName, new ReflectSpec(typeElement, "GeneratedReflector", ReflectMetadataLevel.FIELDS, false));
+        TypeElement superType = directSuperType(typeElement);
+        if (superType != null && !isJavaLangObject(superType) && shouldAutoReflect(superType)) {
+            registerReflectType(superType, visiting);
+        }
+        for (VariableElement field : collectInstanceFields(typeElement)) {
+            registerReflectTypes(field.asType(), visiting);
+        }
+        visiting.remove(qualifiedName);
+    }
+
+    private boolean shouldAutoReflect(TypeElement typeElement) {
+        if (typeElement == null || typeElement.getKind() != ElementKind.CLASS || isGeneratedType(typeElement)) {
+            return false;
+        }
+        String packageName = packageNameOf(typeElement);
+        return !packageName.startsWith("java.")
+                && !packageName.startsWith("javax.")
+                && !packageName.startsWith("jakarta.");
     }
 
     private TypeElement asTypeElement(TypeMirror typeMirror) {
@@ -852,12 +1463,207 @@ public class KoraProcessor extends AbstractProcessor {
         return element instanceof TypeElement ? (TypeElement) element : null;
     }
 
-    private TypeElement typeElementOf(String qualifiedName) {
-        TypeElement typeElement = elements.getTypeElement(qualifiedName);
-        if (typeElement == null) {
-            throw new ProcessorException("Unknown type: " + qualifiedName);
+    private List<MapperMethodSpec> mapperMethods(TypeElement mapperType, MapperXmlDefinition xmlDefinition) {
+        List<MapperMethodSpec> methods = new ArrayList<>();
+        for (Element enclosedElement : mapperType.getEnclosedElements()) {
+            if (enclosedElement.getKind() != ElementKind.METHOD || enclosedElement.getModifiers().contains(Modifier.DEFAULT)) {
+                continue;
+            }
+            ExecutableElement method = (ExecutableElement) enclosedElement;
+            SqlNodeDefinition statement = xmlDefinition.getStatements().get(method.getSimpleName().toString());
+            if (statement == null) {
+                throw new ProcessorException("No xml statement found for method: " + method.getSimpleName());
+            }
+            methods.add(new MapperMethodSpec(method, statement));
         }
-        return typeElement;
+        return methods;
+    }
+
+    private List<MapperCapabilityDelegateSpec> mapperCapabilityDelegates(TypeElement mapperType, List<MapperMethodSpec> mapperMethods) {
+        Map<String, MapperMethodSpec> mapperMethodSignatures = new LinkedHashMap<>();
+        for (MapperMethodSpec mapperMethod : mapperMethods) {
+            mapperMethodSignatures.put(methodSignature(mapperMethod.method()), mapperMethod);
+        }
+        List<MapperCapabilityDelegateSpec> delegates = new ArrayList<>();
+        Set<String> delegatedContracts = new HashSet<>();
+        Set<String> delegatedMethodSignatures = new HashSet<>(mapperMethodSignatures.keySet());
+        Set<String> usedFieldNames = new HashSet<>();
+        collectMapperCapabilityDelegates(mapperType.asType(), delegates, delegatedContracts, delegatedMethodSignatures, usedFieldNames);
+        return delegates;
+    }
+
+    private void collectMapperCapabilityDelegates(TypeMirror typeMirror,
+                                                  List<MapperCapabilityDelegateSpec> delegates,
+                                                  Set<String> delegatedContracts,
+                                                  Set<String> delegatedMethodSignatures,
+                                                  Set<String> usedFieldNames) {
+        if (!(typeMirror instanceof DeclaredType declaredType)) {
+            return;
+        }
+        for (TypeMirror interfaceTypeMirror : types.directSupertypes(declaredType)) {
+            if (!(interfaceTypeMirror instanceof DeclaredType interfaceType)) {
+                continue;
+            }
+            TypeElement interfaceElement = asTypeElement(interfaceType);
+            if (interfaceElement == null || interfaceElement.getKind() != ElementKind.INTERFACE) {
+                continue;
+            }
+            MapperCapabilitySpec capabilitySpec = mapperCapabilitySpecs.get(interfaceElement.getQualifiedName().toString());
+            if (capabilitySpec != null && delegatedContracts.add(interfaceElement.getQualifiedName().toString())) {
+                List<MapperCapabilityMethodSpec> methods = new ArrayList<>();
+                for (Element enclosedElement : interfaceElement.getEnclosedElements()) {
+                    if (enclosedElement.getKind() != ElementKind.METHOD || enclosedElement.getModifiers().contains(Modifier.DEFAULT)) {
+                        continue;
+                    }
+                    ExecutableElement method = (ExecutableElement) enclosedElement;
+                    if (method.getModifiers().contains(Modifier.STATIC)) {
+                        continue;
+                    }
+                    String signature = methodSignature(method);
+                    if (!delegatedMethodSignatures.add(signature)) {
+                        continue;
+                    }
+                    ExecutableType resolvedMethodType = (ExecutableType) types.asMemberOf(interfaceType, method);
+                    methods.add(new MapperCapabilityMethodSpec(
+                            method.getSimpleName().toString(),
+                            resolvedMethodType.getReturnType().toString(),
+                            resolvedMethodType.getParameterTypes().stream().map(TypeMirror::toString).toList(),
+                            method.getParameters().stream().map(parameter -> parameter.getSimpleName().toString()).toList()
+                    ));
+                }
+                if (!methods.isEmpty()) {
+                    String fieldName = uniqueCapabilityFieldName(interfaceElement.getSimpleName().toString(), usedFieldNames);
+                    delegates.add(new MapperCapabilityDelegateSpec(
+                            fieldName,
+                            interfaceType.toString(),
+                            renderCapabilityInstantiation(capabilitySpec.implType(), interfaceType),
+                            methods
+                    ));
+                }
+            }
+            collectMapperCapabilityDelegates(interfaceType, delegates, delegatedContracts, delegatedMethodSignatures, usedFieldNames);
+        }
+    }
+
+    private String mapperEntityTypeLiteral(TypeElement mapperType) {
+        Set<String> entityTypes = new LinkedHashSet<>();
+        collectMapperEntityTypes(mapperType.asType(), entityTypes);
+        if (entityTypes.isEmpty()) {
+            return "java.lang.Object";
+        }
+        if (entityTypes.size() > 1) {
+            throw new ProcessorException("Mapper capability entity type is ambiguous for mapper: " + mapperType.getQualifiedName() + " -> " + entityTypes);
+        }
+        return entityTypes.iterator().next();
+    }
+
+    private void collectMapperEntityTypes(TypeMirror typeMirror, Set<String> entityTypes) {
+        if (!(typeMirror instanceof DeclaredType declaredType)) {
+            return;
+        }
+        for (TypeMirror interfaceTypeMirror : types.directSupertypes(declaredType)) {
+            if (!(interfaceTypeMirror instanceof DeclaredType interfaceType)) {
+                continue;
+            }
+            TypeElement interfaceElement = asTypeElement(interfaceType);
+            if (interfaceElement == null || interfaceElement.getKind() != ElementKind.INTERFACE) {
+                continue;
+            }
+            if (mapperCapabilitySpecs.containsKey(interfaceElement.getQualifiedName().toString()) && !interfaceType.getTypeArguments().isEmpty()) {
+                entityTypes.add(types.erasure(interfaceType.getTypeArguments().getFirst()).toString());
+            }
+            collectMapperEntityTypes(interfaceType, entityTypes);
+        }
+    }
+
+    private String renderCapabilityInstantiation(TypeElement implType, DeclaredType interfaceType) {
+        CapabilityConstructorMode constructorMode = capabilityConstructorMode(implType);
+        String implTypeName = implType.getQualifiedName().toString();
+        if (constructorMode == CapabilityConstructorMode.SQL_SESSION) {
+            return "new " + implTypeName + "(sqlSession)";
+        }
+        if (interfaceType.getTypeArguments().isEmpty()) {
+            throw new ProcessorException("Mapper capability " + interfaceType + " must declare an entity type argument");
+        }
+        TypeMirror entityType = interfaceType.getTypeArguments().getFirst();
+        return "new " + implTypeName + "(sqlSession, " + types.erasure(entityType) + ".class)";
+    }
+
+    private CapabilityConstructorMode capabilityConstructorMode(TypeElement implType) {
+        for (Element enclosedElement : implType.getEnclosedElements()) {
+            if (enclosedElement.getKind() != ElementKind.CONSTRUCTOR) {
+                continue;
+            }
+            ExecutableElement constructor = (ExecutableElement) enclosedElement;
+            List<? extends VariableElement> parameters = constructor.getParameters();
+            if (parameters.size() == 1 && parameters.getFirst().asType().toString().equals(SQL_SESSION)) {
+                return CapabilityConstructorMode.SQL_SESSION;
+            }
+            if (parameters.size() == 2
+                    && parameters.getFirst().asType().toString().equals(SQL_SESSION)
+                    && types.erasure(parameters.get(1).asType()).toString().equals(Class.class.getCanonicalName())) {
+                return CapabilityConstructorMode.SQL_SESSION_AND_ENTITY_CLASS;
+            }
+        }
+        throw new ProcessorException("Mapper capability impl must declare constructor (SqlSession) or (SqlSession, Class<?>): " + implType.getQualifiedName());
+    }
+
+    private TypeElement mapperCapabilityContractType(TypeElement implType) {
+        for (AnnotationMirror annotationMirror : implType.getAnnotationMirrors()) {
+            if (!annotationMirror.getAnnotationType().toString().equals(MapperCapability.class.getCanonicalName())) {
+                continue;
+            }
+            for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> entry : annotationMirror.getElementValues().entrySet()) {
+                if (entry.getKey().getSimpleName().contentEquals("value") && entry.getValue().getValue() instanceof TypeMirror typeMirror) {
+                    return asTypeElement(typeMirror);
+                }
+            }
+        }
+        return null;
+    }
+
+    private String methodSignature(ExecutableElement method) {
+        StringBuilder signature = new StringBuilder(method.getSimpleName()).append('(');
+        List<? extends VariableElement> parameters = method.getParameters();
+        for (int i = 0; i < parameters.size(); i++) {
+            if (i > 0) {
+                signature.append(',');
+            }
+            signature.append(types.erasure(parameters.get(i).asType()));
+        }
+        signature.append(')');
+        return signature.toString();
+    }
+
+    private String uniqueCapabilityFieldName(String simpleName, Set<String> usedFieldNames) {
+        String baseName = Character.toLowerCase(simpleName.charAt(0)) + simpleName.substring(1);
+        String candidate = baseName;
+        int index = 2;
+        while (!usedFieldNames.add(candidate)) {
+            candidate = baseName + index++;
+        }
+        return candidate;
+    }
+
+    private boolean canInstantiate(TypeElement typeElement) {
+        if (typeElement.getModifiers().contains(Modifier.ABSTRACT)) {
+            return false;
+        }
+        List<ExecutableElement> constructors = new ArrayList<>();
+        for (Element enclosedElement : typeElement.getEnclosedElements()) {
+            if (enclosedElement.getKind() == ElementKind.CONSTRUCTOR) {
+                constructors.add((ExecutableElement) enclosedElement);
+            }
+        }
+        if (constructors.isEmpty()) {
+            return true;
+        }
+        for (ExecutableElement constructor : constructors) {
+            if (constructor.getParameters().isEmpty() && !constructor.getModifiers().contains(Modifier.PRIVATE)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private ReflectSpec reflectSpecFor(TypeElement typeElement) {
@@ -866,7 +1672,7 @@ public class KoraProcessor extends AbstractProcessor {
         }
         ReflectSpec spec = reflectSpecs.get(typeElement.getQualifiedName().toString());
         if (spec == null) {
-            throw new ProcessorException("Type must be annotated with @Reflect: " + typeElement.getQualifiedName());
+            throw new ProcessorException("No GeneratedReflector registered for type: " + typeElement.getQualifiedName());
         }
         return spec;
     }
@@ -887,7 +1693,10 @@ public class KoraProcessor extends AbstractProcessor {
         List<VariableElement> fields = new ArrayList<>();
         for (Element enclosedElement : entityType.getEnclosedElements()) {
             if (enclosedElement.getKind() == ElementKind.FIELD && !enclosedElement.getModifiers().contains(Modifier.STATIC)) {
-                fields.add((VariableElement) enclosedElement);
+                VariableElement field = (VariableElement) enclosedElement;
+                if (!isIgnoredGeneratedField(field)) {
+                    fields.add(field);
+                }
             }
         }
         return fields;
@@ -899,10 +1708,80 @@ public class KoraProcessor extends AbstractProcessor {
             if (enclosedElement.getKind() == ElementKind.METHOD
                     && !enclosedElement.getModifiers().contains(Modifier.STATIC)
                     && !enclosedElement.getModifiers().contains(Modifier.PRIVATE)) {
-                methods.add((ExecutableElement) enclosedElement);
+                ExecutableElement method = (ExecutableElement) enclosedElement;
+                if (!isIgnoredGeneratedMethod(method)) {
+                    methods.add(method);
+                }
             }
         }
         return methods;
+    }
+
+    private boolean isIgnoredGeneratedField(VariableElement field) {
+        String fieldName = field.getSimpleName().toString();
+        return fieldName.startsWith("$") || hasAnnotation(field, "lombok.Generated");
+    }
+
+    private boolean isIgnoredGeneratedMethod(ExecutableElement method) {
+        if (isAccessorMethod(method)) {
+            return false;
+        }
+        String methodName = method.getSimpleName().toString();
+        if (methodName.startsWith("$")) {
+            return true;
+        }
+        if (methodName.equals("canEqual") && method.getParameters().size() == 1) {
+            return true;
+        }
+        if (methodName.equals("builder") && method.getParameters().isEmpty()) {
+            return true;
+        }
+        if (methodName.equals("toBuilder") && method.getParameters().isEmpty()) {
+            return true;
+        }
+        return hasAnnotation(method, "lombok.Generated") || isObjectDerivedMethod(method);
+    }
+
+    private boolean isAccessorMethod(ExecutableElement method) {
+        String methodName = method.getSimpleName().toString();
+        int parameterCount = method.getParameters().size();
+        if (parameterCount == 0) {
+            return methodName.startsWith("get") && methodName.length() > 3
+                    || methodName.startsWith("is") && methodName.length() > 2;
+        }
+        return parameterCount == 1 && methodName.startsWith("set") && methodName.length() > 3;
+    }
+
+    private boolean hasAnnotation(Element element, String annotationType) {
+        for (AnnotationMirror annotationMirror : element.getAnnotationMirrors()) {
+            if (annotationMirror.getAnnotationType().toString().equals(annotationType)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isObjectDerivedMethod(ExecutableElement method) {
+        String methodName = method.getSimpleName().toString();
+        List<? extends VariableElement> parameters = method.getParameters();
+        if (methodName.equals("toString") && parameters.isEmpty()) {
+            return true;
+        }
+        if (methodName.equals("hashCode") && parameters.isEmpty()) {
+            return true;
+        }
+        return methodName.equals("equals")
+                && parameters.size() == 1
+                && parameters.getFirst().asType().toString().equals(Object.class.getCanonicalName());
+    }
+
+    private TypeElement directSuperType(TypeElement entityType) {
+        TypeMirror superType = entityType.getSuperclass();
+        return superType == null || superType.getKind() == TypeKind.NONE ? null : asTypeElement(superType);
+    }
+
+    private boolean isJavaLangObject(TypeElement typeElement) {
+        return typeElement != null && typeElement.getQualifiedName().contentEquals(Object.class.getCanonicalName());
     }
 
     private String buildInvokeCase(ExecutableElement method) {
@@ -926,7 +1805,7 @@ public class KoraProcessor extends AbstractProcessor {
                 source.append(", ");
             }
             VariableElement parameter = parameters.get(i);
-            source.append("(").append(boxedType(parameter.asType().toString())).append(") ")
+            source.append("(").append(renderRuntimeCastType(parameter.asType())).append(") ")
                     .append("args[").append(i).append("]");
         }
         return source.toString();
@@ -935,11 +1814,11 @@ public class KoraProcessor extends AbstractProcessor {
     private String buildSetCase(TypeElement entityType, VariableElement field) {
         String fieldName = field.getSimpleName().toString();
         ExecutableElement setter = findMethod(entityType, "set" + capitalize(fieldName), 1);
-        String fieldType = boxedType(field.asType().toString());
+        String fieldType = renderRuntimeCastType(field.asType());
         StringBuilder source = new StringBuilder();
         source.append("            case \"").append(fieldName).append("\":\n");
         if (setter != null) {
-            source.append("                invoke(target, \"").append(setter.getSimpleName()).append("\", new Object[]{value});\n");
+            source.append("                target.").append(setter.getSimpleName()).append("((").append(fieldType).append(") value);\n");
         } else if (!field.getModifiers().contains(Modifier.PRIVATE)) {
             source.append("                target.").append(fieldName).append(" = (")
                     .append(fieldType).append(") value;\n");
@@ -959,9 +1838,9 @@ public class KoraProcessor extends AbstractProcessor {
         StringBuilder source = new StringBuilder();
         source.append("            case \"").append(fieldName).append("\":\n");
         if (getter != null) {
-            source.append("                return invoke(target, \"").append(getter.getSimpleName()).append("\", new Object[0]);\n");
+            source.append("                return target.").append(getter.getSimpleName()).append("();\n");
         } else if (booleanGetter != null) {
-            source.append("                return invoke(target, \"").append(booleanGetter.getSimpleName()).append("\", new Object[0]);\n");
+            source.append("                return target.").append(booleanGetter.getSimpleName()).append("();\n");
         } else if (!field.getModifiers().contains(Modifier.PRIVATE)) {
             source.append("                return target.").append(fieldName).append(";\n");
         } else {
@@ -1024,6 +1903,13 @@ public class KoraProcessor extends AbstractProcessor {
         return value == null ? "null" : "\"" + escapeJava(value) + "\"";
     }
 
+    private String renderNullableTypeLiteral(TypeMirror typeMirror) {
+        if (typeMirror == null || typeMirror.getKind() == TypeKind.NONE) {
+            return "null";
+        }
+        return renderTypeLiteral(typeMirror);
+    }
+
     private String statementFieldName(String statementId) {
         StringBuilder builder = new StringBuilder("SQL_");
         for (int i = 0; i < statementId.length(); i++) {
@@ -1052,6 +1938,14 @@ public class KoraProcessor extends AbstractProcessor {
             case "char" -> "java.lang.Character";
             default -> typeName;
         };
+    }
+
+    private String renderRuntimeCastType(TypeMirror typeMirror) {
+        if (typeMirror == null) {
+            return Object.class.getCanonicalName();
+        }
+        TypeMirror erasedType = types.erasure(typeMirror);
+        return boxedType(erasedType.toString());
     }
 
     private String packageNameOf(TypeElement typeElement) {
@@ -1093,6 +1987,33 @@ public class KoraProcessor extends AbstractProcessor {
             this.metadataLevel = metadataLevel;
             this.annotationMetadata = annotationMetadata;
         }
+    }
+
+    private record MapperMethodSpec(ExecutableElement method, SqlNodeDefinition statement) {
+    }
+
+    private record MapperCapabilitySpec(TypeElement contractType, TypeElement implType) {
+    }
+
+    private record MapperCapabilityDelegateSpec(
+            String fieldName,
+            String interfaceTypeLiteral,
+            String instantiation,
+            List<MapperCapabilityMethodSpec> methods
+    ) {
+    }
+
+    private record MapperCapabilityMethodSpec(
+            String methodName,
+            String returnType,
+            List<String> parameterTypes,
+            List<String> parameterNames
+    ) {
+    }
+
+    private enum CapabilityConstructorMode {
+        SQL_SESSION,
+        SQL_SESSION_AND_ENTITY_CLASS
     }
 
     private static final class ScanSpec {

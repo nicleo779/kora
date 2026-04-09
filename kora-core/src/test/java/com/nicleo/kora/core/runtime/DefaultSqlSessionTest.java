@@ -1,6 +1,8 @@
 package com.nicleo.kora.core.runtime;
 
 import com.nicleo.kora.core.runtime.jdbc.DefaultSqlSession;
+import com.nicleo.kora.core.util.DefaultNameConverter;
+import com.nicleo.kora.core.util.NameConverter;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -11,12 +13,14 @@ import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class DefaultSqlSessionTest {
     private JdbcDataSource dataSource;
@@ -29,7 +33,7 @@ class DefaultSqlSessionTest {
         dataSource.setUser("sa");
         dataSource.setPassword("");
         this.sqlSession = new DefaultSqlSession(dataSource);
-        TypeConverter.clearCustomConverters();
+        sqlSession.clearTypeConverters();
         GeneratedReflectors.install(new TestReflectorResolver());
 
         sqlSession.update("drop table if exists user_account", new Object[0]);
@@ -63,6 +67,24 @@ class DefaultSqlSessionTest {
         assertEquals(2, users.size());
         assertEquals("Alice", users.get(0).getUserName());
         assertEquals("Bob", users.get(1).getUserName());
+        assertThrows(UnsupportedOperationException.class, () -> users.add(new UserAccount()));
+    }
+
+    @Test
+    void selectListReturnsSameReadOnlyListWhenCached() {
+        List<UserAccount> first = sqlSession.selectList(
+                "select id, user_name, age from user_account order by id",
+                new Object[0],
+                UserAccount.class
+        );
+        List<UserAccount> cached = sqlSession.selectList(
+                "select id, user_name, age from user_account order by id",
+                new Object[0],
+                UserAccount.class
+        );
+
+        assertSame(first, cached);
+        assertEquals(ImmutableArrayList.class, first.getClass());
     }
 
     @Test
@@ -187,7 +209,7 @@ class DefaultSqlSessionTest {
                 "update user_account set created_at = ? where id = ?",
                 new Object[]{Timestamp.valueOf(LocalDateTime.of(2024, 1, 2, 3, 4, 5)), 1L}
         );
-        TypeConverter.register(LocalDateTime.class, value -> ((Timestamp) value).toLocalDateTime());
+        sqlSession.registerTypeConverter(LocalDateTime.class, value -> ((Timestamp) value).toLocalDateTime());
 
         TimeUserAccount user = sqlSession.selectOne(
                 "select id, user_name, age, created_at from user_account where id = ?",
@@ -197,6 +219,70 @@ class DefaultSqlSessionTest {
 
         assertNotNull(user);
         assertEquals(LocalDateTime.of(2024, 1, 2, 3, 4, 5), user.getCreatedAt());
+    }
+
+    @Test
+    void typeConvertersShouldBeScopedPerSession() {
+        sqlSession.update("alter table user_account add column created_at timestamp", new Object[0]);
+        sqlSession.update(
+                "update user_account set created_at = ? where id = ?",
+                new Object[]{Timestamp.valueOf(LocalDateTime.of(2024, 1, 2, 3, 4, 5)), 1L}
+        );
+        sqlSession.registerTypeConverter(LocalDateTime.class, value -> ((Timestamp) value).toLocalDateTime());
+        DefaultSqlSession isolatedSession = new DefaultSqlSession(dataSource);
+
+        TimeUserAccount converted = sqlSession.selectOne(
+                "select id, user_name, age, created_at from user_account where id = ?",
+                new Object[]{1L},
+                TimeUserAccount.class
+        );
+        assertNotNull(converted);
+        assertEquals(LocalDateTime.of(2024, 1, 2, 3, 4, 5), converted.getCreatedAt());
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> isolatedSession.selectOne(
+                "select id, user_name, age, created_at from user_account where id = ?",
+                new Object[]{1L},
+                TimeUserAccount.class
+        ));
+        if (ex instanceof SqlSessionException sqlSessionException) {
+            assertEquals(ClassCastException.class, sqlSessionException.getCause().getClass());
+        } else {
+            assertEquals(ClassCastException.class, ex.getClass());
+        }
+    }
+
+    @Test
+    void customNameConverterCanMapAliasedColumns() {
+        AtomicReference<Class<?>> convertedType = new AtomicReference<>();
+        NameConverter prefixedConverter = new NameConverter() {
+            @Override
+            public String columnToField(Class<?> entityType, String columnName) {
+                convertedType.set(entityType);
+                String normalized = columnName == null ? null : columnName.toLowerCase();
+                if (normalized != null && normalized.startsWith("col_")) {
+                    normalized = normalized.substring(4);
+                }
+                return DefaultNameConverter.INSTANCE.columnToField(entityType, normalized);
+            }
+
+            @Override
+            public String fieldToColumn(Class<?> entityType, String fieldName) {
+                return "col_" + DefaultNameConverter.INSTANCE.fieldToColumn(entityType, fieldName);
+            }
+        };
+        DefaultSqlSession customSession = new DefaultSqlSession(dataSource, prefixedConverter);
+
+        UserAccount user = customSession.selectOne(
+                "select id as col_id, user_name as col_user_name, age as col_age from user_account where id = ?",
+                new Object[]{1L},
+                UserAccount.class
+        );
+
+        assertNotNull(user);
+        assertEquals(UserAccount.class, convertedType.get());
+        assertEquals(1L, user.getId());
+        assertEquals("Alice", user.getUserName());
+        assertEquals(18, user.getAge());
     }
 
     private void updateUserNameDirectly(long id, String userName) throws Exception {
@@ -264,9 +350,9 @@ class DefaultSqlSessionTest {
 
     static final class UserAccountGeneratedReflector implements GeneratedReflector<UserAccount> {
         private static final FieldInfo[] FIELDS = new FieldInfo[]{
-                new FieldInfo("id", Long.class, 0, "getId", "setId", new java.lang.annotation.Annotation[0]),
-                new FieldInfo("userName", String.class, 0, "getUserName", "setUserName", new java.lang.annotation.Annotation[0]),
-                new FieldInfo("age", Integer.class, 0, "getAge", "setAge", new java.lang.annotation.Annotation[0])
+                new FieldInfo("id", Long.class, 0, new java.lang.annotation.Annotation[0]),
+                new FieldInfo("userName", String.class, 0, new java.lang.annotation.Annotation[0]),
+                new FieldInfo("age", Integer.class, 0, new java.lang.annotation.Annotation[0])
         };
 
         @Override
@@ -299,7 +385,7 @@ class DefaultSqlSessionTest {
             };
         }
         @Override
-        public FieldInfo[] getFields() { return FIELDS.clone(); }
+        public String[] getFields() { return new String[]{"id", "userName", "age"}; }
         @Override
         public FieldInfo getField(String field) {
             return switch (field) {
@@ -313,7 +399,7 @@ class DefaultSqlSessionTest {
 
     static final class CountResultGeneratedReflector implements GeneratedReflector<CountResult> {
         private static final FieldInfo[] FIELDS = new FieldInfo[]{
-                new FieldInfo("total", Long.class, 0, "getTotal", "setTotal", new java.lang.annotation.Annotation[0])
+                new FieldInfo("total", Long.class, 0, new java.lang.annotation.Annotation[0])
         };
 
         @Override
@@ -340,7 +426,7 @@ class DefaultSqlSessionTest {
             };
         }
         @Override
-        public FieldInfo[] getFields() { return FIELDS.clone(); }
+        public String[] getFields() { return new String[]{"total"}; }
         @Override
         public FieldInfo getField(String field) {
             return "total".equals(field) ? FIELDS[0] : null;
@@ -349,10 +435,10 @@ class DefaultSqlSessionTest {
 
     static final class TimeUserAccountGeneratedReflector implements GeneratedReflector<TimeUserAccount> {
         private static final FieldInfo[] FIELDS = new FieldInfo[]{
-                new FieldInfo("id", Long.class, 0, "getId", "setId", new java.lang.annotation.Annotation[0]),
-                new FieldInfo("userName", String.class, 0, "getUserName", "setUserName", new java.lang.annotation.Annotation[0]),
-                new FieldInfo("age", Integer.class, 0, "getAge", "setAge", new java.lang.annotation.Annotation[0]),
-                new FieldInfo("createdAt", LocalDateTime.class, 0, "getCreatedAt", "setCreatedAt", new java.lang.annotation.Annotation[0])
+                new FieldInfo("id", Long.class, 0, new java.lang.annotation.Annotation[0]),
+                new FieldInfo("userName", String.class, 0, new java.lang.annotation.Annotation[0]),
+                new FieldInfo("age", Integer.class, 0, new java.lang.annotation.Annotation[0]),
+                new FieldInfo("createdAt", LocalDateTime.class, 0, new java.lang.annotation.Annotation[0])
         };
 
         @Override
@@ -388,7 +474,7 @@ class DefaultSqlSessionTest {
             };
         }
         @Override
-        public FieldInfo[] getFields() { return FIELDS.clone(); }
+        public String[] getFields() { return new String[]{"id", "userName", "age", "createdAt"}; }
         @Override
         public FieldInfo getField(String field) {
             return switch (field) {

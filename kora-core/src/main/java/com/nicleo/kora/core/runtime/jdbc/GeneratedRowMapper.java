@@ -1,22 +1,38 @@
 package com.nicleo.kora.core.runtime.jdbc;
 
-import com.nicleo.kora.core.runtime.GeneratedReflector;
 import com.nicleo.kora.core.runtime.FieldInfo;
+import com.nicleo.kora.core.runtime.GeneratedReflector;
 import com.nicleo.kora.core.runtime.RowMapper;
 import com.nicleo.kora.core.runtime.TypeConverter;
-import com.nicleo.kora.core.util.NameUtils;
+import com.nicleo.kora.core.util.DefaultNameConverter;
+import com.nicleo.kora.core.util.NameConverter;
 
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.Objects;
 
 public final class GeneratedRowMapper<T> implements RowMapper<T> {
+    private final Class<T> entityType;
     private final GeneratedReflector<T> reflector;
+    private final NameConverter nameConverter;
+    private final TypeConverter typeConverter;
 
-    public GeneratedRowMapper(GeneratedReflector<T> reflector) {
-        this.reflector = reflector;
+    public GeneratedRowMapper(Class<T> entityType, GeneratedReflector<T> reflector) {
+        this(entityType, reflector, DefaultNameConverter.INSTANCE, new TypeConverter());
+    }
+
+    public GeneratedRowMapper(Class<T> entityType, GeneratedReflector<T> reflector, NameConverter nameConverter) {
+        this(entityType, reflector, nameConverter, new TypeConverter());
+    }
+
+    public GeneratedRowMapper(Class<T> entityType, GeneratedReflector<T> reflector, NameConverter nameConverter, TypeConverter typeConverter) {
+        this.entityType = Objects.requireNonNull(entityType, "entityType");
+        this.reflector = Objects.requireNonNull(reflector, "reflector");
+        this.nameConverter = Objects.requireNonNull(nameConverter, "nameConverter");
+        this.typeConverter = Objects.requireNonNull(typeConverter, "typeConverter");
     }
 
     @Override
@@ -28,11 +44,12 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
             Object value = resultSet.getObject(columnIndex);
             String fieldName = resolveFieldName(columnLabel);
             FieldInfo fieldInfo = reflector.getField(fieldName);
-            if (fieldInfo != null) {
-                Class<?> targetType = resolveTargetType(fieldInfo.type());
-                if (targetType != null) {
-                    value = TypeConverter.cast(value, targetType);
-                }
+            if (fieldInfo == null) {
+                continue;
+            }
+            Class<?> targetType = resolveTargetType(fieldInfo.type());
+            if (targetType != null) {
+                value = typeConverter.cast(value, targetType);
             }
             reflector.set(instance, fieldName, value);
         }
@@ -40,10 +57,10 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
     }
 
     private String resolveFieldName(String columnLabel) {
-        if (reflector.getField(columnLabel) != null) {
+        if (reflector.hasField(columnLabel)) {
             return columnLabel;
         }
-        return NameUtils.snakeToCamel(columnLabel);
+        return nameConverter.columnToField(entityType, columnLabel);
     }
 
     private Class<?> resolveTargetType(Type type) {

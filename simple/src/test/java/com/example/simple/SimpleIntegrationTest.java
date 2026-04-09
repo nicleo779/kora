@@ -1,9 +1,15 @@
 package com.example.simple;
 
+import com.example.simple.dto.AgeRange;
+import com.example.simple.dto.UserFilter;
+import com.example.simple.dto.UserQuery;
+import com.example.simple.dto.UserSummary;
 import com.example.simple.entity.User;
 import com.example.simple.entity.meta.USER;
 import com.example.simple.mapper.UserMapper;
 import com.example.simple.mapper.UserMapperImpl;
+import com.example.simple.query.UserTable;
+import com.nicleo.kora.core.query.Wrapper;
 import com.nicleo.kora.core.runtime.FieldInfo;
 import com.nicleo.kora.core.runtime.GeneratedReflector;
 import com.nicleo.kora.core.runtime.GeneratedReflectors;
@@ -16,13 +22,18 @@ import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.sql.Connection;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SimpleIntegrationTest {
@@ -41,8 +52,8 @@ class SimpleIntegrationTest {
 
         try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
             statement.execute("drop table if exists users");
-            statement.execute("create table users(id bigint auto_increment primary key, name varchar(64), age int)");
-            statement.execute("insert into users(name, age) values ('Alice', 18), ('Bob', 25), ('Cindy', 30)");
+            statement.execute("create table users(id bigint auto_increment primary key, name varchar(64), age int, user_name varchar(64))");
+            statement.execute("insert into users(name, age, user_name) values ('Alice', 18, 'alice_01'), ('Bob', 25, 'bob_02'), ('Cindy', 30, 'cindy_03')");
         }
     }
 
@@ -50,10 +61,12 @@ class SimpleIntegrationTest {
     void generatedMapperAndMetaShouldWork() {
         assertEquals("name", USER.name);
         assertEquals("age", USER.age);
-        assertEquals("user_name",USER.userName);
+        assertEquals("userName", USER.userName);
         User alice = userMapper.selectById(1L);
         assertNotNull(alice);
+        assertEquals(1L, alice.getId());
         assertEquals("Alice", alice.getName());
+        assertEquals("alice_01", alice.getUserName());
 
         List<User> ranged = userMapper.selectByAgeRange(20, 30);
         assertEquals(2, ranged.size());
@@ -61,9 +74,40 @@ class SimpleIntegrationTest {
         List<User> ids = userMapper.selectByIds(List.of(1L, 3L));
         assertEquals(List.of("Alice", "Cindy"), ids.stream().map(User::getName).toList());
 
+        List<UserSummary> summaries = userMapper.selectSummaries(new UserQuery(20, 30));
+        assertEquals(2, summaries.size());
+        assertEquals("Bob", summaries.get(0).getName());
+        assertEquals("bob_02", summaries.get(0).getUserName());
+
+        List<User> nested = userMapper.selectByNestedFilter(new UserFilter(new AgeRange(20, 30)));
+        assertEquals(List.of("Bob", "Cindy"), nested.stream().map(User::getName).toList());
+
+        assertEquals(1, userMapper.updateNameById(1L, "Alicia"));
+        assertEquals("Alicia", userMapper.selectById(1L).getName());
+
+        List<User> wrapped = userMapper.selectList(
+                Wrapper.of(User.class)
+                        .selectAll()
+                        .from(UserTable.USERS)
+                        .where(where -> where.geIfPresent(UserTable.USERS.AGE, 20).leIfPresent(UserTable.USERS.AGE, 30))
+                        .orderBy(order -> order.asc(UserTable.USERS.ID))
+        );
+        assertEquals(List.of("Bob", "Cindy"), wrapped.stream().map(User::getName).toList());
+
+        User wrappedOne = userMapper.selectOne(
+                Wrapper.of(User.class)
+                        .selectAll()
+                        .from(UserTable.USERS)
+                        .where(where -> where.eq(UserTable.USERS.ID, 2L))
+                        .limit(1)
+        );
+        assertNotNull(wrappedOne);
+        assertEquals("Bob", wrappedOne.getName());
+
         int updated = userMapper.insert(new User(null, "Dylan", 27,"zhansan"));
         assertEquals(1, updated);
         assertEquals(4, userMapper.selectByAgeRange(null, null).size());
+        assertEquals("zhansan", userMapper.selectById(4L).getUserName());
     }
 
     @Test
@@ -91,16 +135,57 @@ class SimpleIntegrationTest {
         GeneratedReflector<User> reflector = GeneratedReflectors.get(User.class);
 
         FieldInfo nameField = reflector.getField("name");
+        FieldInfo idField = reflector.getField("id");
         MethodInfo[] getNameMethods = reflector.getMethod("getName");
 
         assertNotNull(nameField);
+        assertNotNull(idField);
         assertEquals("name", nameField.name());
         assertEquals(String.class, nameField.type());
-        assertEquals("getName", nameField.getter());
-        assertEquals("setName", nameField.setter());
-        assertTrue(reflector.getFields().length >= 4);
-        assertEquals(1, getNameMethods.length);
-        assertEquals(String.class, getNameMethods[0].returnType());
-        assertEquals(0, getNameMethods[0].params().length);
+        assertEquals("id", idField.name());
+        assertEquals(Long.class, idField.type());
+        FieldInfo idsField = reflector.getField("ids");
+        assertNotNull(idsField);
+        assertTrue(idsField.type() instanceof ParameterizedType);
+        ParameterizedType idsFieldType = (ParameterizedType) idsField.type();
+        assertEquals(List.class, idsFieldType.getRawType());
+        assertEquals(String.class, idsFieldType.getActualTypeArguments()[0]);
+        assertTrue(Arrays.asList(reflector.getFields()).contains("name"));
+        assertTrue(Arrays.asList(reflector.getFields()).contains("id"));
+        assertEquals(0, reflector.getMethods().length);
+        assertEquals(0, getNameMethods.length);
+        MethodInfo[] getIdsMethods = reflector.getMethod("getIds");
+        assertEquals(0, getIdsMethods.length);
+        MethodInfo[] setIdsMethods = reflector.getMethod("setIds");
+        assertEquals(0, setIdsMethods.length);
+        Type superType = reflector.getClassInfo().superType();
+        assertTrue(superType instanceof ParameterizedType);
+        ParameterizedType parameterizedSuperType = (ParameterizedType) superType;
+        assertEquals(com.example.simple.entity.BaseUser.class, parameterizedSuperType.getRawType());
+        assertEquals(Long.class, parameterizedSuperType.getActualTypeArguments()[0]);
+    }
+
+    @Test
+    void mapperParameterAndReturnTypesShouldAutoGenerateReflector() {
+        GeneratedReflector<AgeRange> rangeReflector = GeneratedReflectors.get(AgeRange.class);
+        GeneratedReflector<UserFilter> filterReflector = GeneratedReflectors.get(UserFilter.class);
+        GeneratedReflector<UserQuery> queryReflector = GeneratedReflectors.get(UserQuery.class);
+        GeneratedReflector<UserSummary> summaryReflector = GeneratedReflectors.get(UserSummary.class);
+
+        AgeRange range = new AgeRange(18, 25);
+        UserFilter filter = new UserFilter(range);
+        UserQuery query = new UserQuery(18, 25);
+        assertEquals(18, rangeReflector.get(range, "minAge"));
+        assertSame(range, filterReflector.get(filter, "range"));
+        assertEquals(18, queryReflector.get(query, "minAge"));
+        assertEquals(25, queryReflector.get(query, "maxAge"));
+        assertNotNull(summaryReflector.getField("userName"));
+        assertTrue(summaryReflector.hasField("name"));
+        assertThrows(UnsupportedOperationException.class, rangeReflector::newInstance);
+        assertThrows(UnsupportedOperationException.class, filterReflector::newInstance);
+        assertThrows(UnsupportedOperationException.class, queryReflector::newInstance);
+        UserSummary summary = summaryReflector.newInstance();
+        summaryReflector.set(summary, "name", "Demo");
+        assertEquals("Demo", summary.getName());
     }
 }
