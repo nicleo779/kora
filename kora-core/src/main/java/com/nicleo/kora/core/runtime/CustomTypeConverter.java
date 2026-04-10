@@ -1,6 +1,9 @@
 package com.nicleo.kora.core.runtime;
 
-@FunctionalInterface
-public interface CustomTypeConverter<T> {
-    T convert(Object value);
+public interface CustomTypeConverter {
+    boolean supports(Class<?> targetType);
+
+    Object fromDb(Object value, Class<?> targetType);
+
+    Object toDb(Object value, Class<?> targetType);
 }

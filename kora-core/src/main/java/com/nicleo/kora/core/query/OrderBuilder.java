@@ -6,13 +6,13 @@ import java.util.List;
 public final class OrderBuilder {
     private final List<Order> orders = new ArrayList<>();
 
-    public OrderBuilder asc(Column<?, ?> column) {
-        orders.add(column.asc());
+    public OrderBuilder asc(SqlExpression expression) {
+        orders.add(expression.asc());
         return this;
     }
 
-    public OrderBuilder desc(Column<?, ?> column) {
-        orders.add(column.desc());
+    public OrderBuilder desc(SqlExpression expression) {
+        orders.add(expression.desc());
         return this;
     }
 

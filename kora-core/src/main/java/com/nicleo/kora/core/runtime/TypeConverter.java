@@ -4,10 +4,11 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public final class TypeConverter {
-    private final List<RegisteredConverter<?>> customConverters = new CopyOnWriteArrayList<>();
+    private final List<CustomTypeConverter> customConverters = new CopyOnWriteArrayList<>();
 
-    public <T> void register(Class<T> targetType, CustomTypeConverter<? extends T> converter) {
-        customConverters.add(registeredConverter(targetType, converter));
+    public TypeConverter register(CustomTypeConverter converter) {
+        customConverters.add(converter);
+        return this;
     }
 
     public void clearCustomConverters() {
@@ -25,7 +26,7 @@ public final class TypeConverter {
         if (normalizedTargetType.isInstance(value)) {
             return value;
         }
-        Object converted = applyCustomConverters(value, normalizedTargetType);
+        Object converted = applyCustomConvertersFromDb(value, normalizedTargetType);
         if (converted != null) {
             return converted;
         }
@@ -61,10 +62,27 @@ public final class TypeConverter {
         return normalizedTargetType.cast(value);
     }
 
-    private Object applyCustomConverters(Object value, Class<?> targetType) {
-        for (RegisteredConverter<?> registeredConverter : customConverters) {
-            if (registeredConverter.supports(targetType)) {
-                return registeredConverter.convert(value);
+    public Object toDbValue(Object value) {
+        if (value == null) {
+            return null;
+        }
+        Object converted = applyCustomConvertersToDb(value, wrap(value.getClass()));
+        return converted != null ? converted : value;
+    }
+
+    private Object applyCustomConvertersFromDb(Object value, Class<?> targetType) {
+        for (CustomTypeConverter converter : customConverters) {
+            if (converter.supports(targetType)) {
+                return converter.fromDb(value, targetType);
+            }
+        }
+        return null;
+    }
+
+    private Object applyCustomConvertersToDb(Object value, Class<?> sourceType) {
+        for (CustomTypeConverter converter : customConverters) {
+            if (converter.supports(sourceType)) {
+                return converter.toDb(value, sourceType);
             }
         }
         return null;
@@ -87,26 +105,4 @@ public final class TypeConverter {
         };
     }
 
-    @SuppressWarnings("unchecked")
-    private static <T> RegisteredConverter<T> registeredConverter(Class<T> targetType, CustomTypeConverter<? extends T> converter) {
-        return new RegisteredConverter<>((Class<T>) wrap(targetType), converter);
-    }
-
-    private static final class RegisteredConverter<T> {
-        private final Class<T> targetType;
-        private final CustomTypeConverter<? extends T> converter;
-
-        private RegisteredConverter(Class<T> targetType, CustomTypeConverter<? extends T> converter) {
-            this.targetType = targetType;
-            this.converter = converter;
-        }
-
-        private boolean supports(Class<?> targetType) {
-            return this.targetType == targetType;
-        }
-
-        private Object convert(Object value) {
-            return converter.convert(value);
-        }
-    }
 }

@@ -133,24 +133,24 @@ class KoraAutoConfigurationTest {
                         statement.execute("insert into tx_demo(id, name) values (1, 'a'), (2, 'b')");
                     }
 
-                    QueryWrapper<TxRow> oneQuery = Wrapper.<TxRow>of()
+                    QueryWrapper<TxRow> oneQuery = Wrapper.<TxRow>query()
                             .selectAll()
                             .from(TxRowTable.TX_DEMO)
-                            .orderBy(order -> order.asc(TxRowTable.TX_DEMO.ID))
+                            .orderBy(order -> order.asc(TxRowTable.TX_DEMO.id))
                             .limit(1);
 
                     TxRow one = Sql.of(oneQuery).one(TxRow.class);
                     assertEquals(1L, one.getId());
 
-                    QueryWrapper<TxRow> pageQuery = Wrapper.<TxRow>of()
+                    QueryWrapper<TxRow> pageQuery = Wrapper.<TxRow>query()
                             .selectAll()
                             .from(TxRowTable.TX_DEMO)
-                            .orderBy(order -> order.asc(TxRowTable.TX_DEMO.ID));
+                            .orderBy(order -> order.asc(TxRowTable.TX_DEMO.id));
                     Paging paging = new Paging();
-                    paging.setIndex(1L);
-                    paging.setSize(1L);
+                    paging.setIndex(1);
+                    paging.setSize(1);
                     Page<TxRow> page = Sql.of(pageQuery).page(paging, TxRow.class);
-                    assertEquals(1L, page.current());
+                    assertEquals(1, page.current());
                     assertEquals(2L, page.total());
                     assertEquals(1, page.records().size());
                 });
@@ -219,8 +219,8 @@ class KoraAutoConfigurationTest {
     static final class TxRowTable extends com.nicleo.kora.core.query.EntityTable<TxRow> {
         static final TxRowTable TX_DEMO = new TxRowTable();
 
-        final com.nicleo.kora.core.query.Column<TxRow, Long> ID = column("id", Long.class);
-        final com.nicleo.kora.core.query.Column<TxRow, String> NAME = column("name", String.class);
+        final com.nicleo.kora.core.query.Column<TxRow, Long> id = column("id", Long.class);
+        final com.nicleo.kora.core.query.Column<TxRow, String> name = column("name", String.class);
 
         private TxRowTable() {
             super(TxRow.class, "tx_demo");
@@ -229,7 +229,7 @@ class KoraAutoConfigurationTest {
         @Override
         @SuppressWarnings("unchecked")
         public <V> com.nicleo.kora.core.query.Column<TxRow, V> idColumn() {
-            return (com.nicleo.kora.core.query.Column<TxRow, V>) ID;
+            return (com.nicleo.kora.core.query.Column<TxRow, V>) id;
         }
 
         @Override
@@ -289,8 +289,8 @@ class KoraAutoConfigurationTest {
         @Override
         public FieldInfo getField(String field) {
             return switch (field) {
-                case "id" -> new FieldInfo("id", Long.class, 0, new java.lang.annotation.Annotation[0]);
-                case "name" -> new FieldInfo("name", String.class, 0, new java.lang.annotation.Annotation[0]);
+                case "id" -> new FieldInfo("id", Long.class, 0, null, new java.lang.annotation.Annotation[0]);
+                case "name" -> new FieldInfo("name", String.class, 0, null, new java.lang.annotation.Annotation[0]);
                 default -> null;
             };
         }

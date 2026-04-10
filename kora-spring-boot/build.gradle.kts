@@ -8,7 +8,6 @@ java {
         languageVersion = JavaLanguageVersion.of(21)
     }
     withSourcesJar()
-    withJavadocJar()
 }
 
 dependencies {

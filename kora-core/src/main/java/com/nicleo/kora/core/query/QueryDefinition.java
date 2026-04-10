@@ -3,11 +3,12 @@ package com.nicleo.kora.core.query;
 import java.util.List;
 
 public record QueryDefinition(
-        List<String> selectExpressions,
+        List<SqlExpression> selectExpressions,
         boolean selectAll,
         EntityTable<?> from,
         List<QueryJoin> joins,
-        List<Column<?, ?>> groupByColumns,
+        List<SqlExpression> groupByExpressions,
+        Condition having,
         WhereDefinition where
 ) {
 }

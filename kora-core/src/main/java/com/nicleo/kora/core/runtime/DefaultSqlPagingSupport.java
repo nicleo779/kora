@@ -9,8 +9,8 @@ import java.util.List;
 public class DefaultSqlPagingSupport implements SqlPagingSupport {
     @Override
     public <T> Page<T> page(SqlSession sqlSession, SqlExecutionContext context, String sql, Object[] args, Paging paging, Class<T> elementType) {
-        long current = paging == null || paging.getIndex() == null || paging.getIndex() < 1 ? 1L : paging.getIndex();
-        long size = paging == null || paging.getSize() == null || paging.getSize() < 1 ? 10L : paging.getSize();
+        int current = paging == null || paging.getIndex() == null || paging.getIndex() < 1 ? 1 : paging.getIndex();
+        int size = paging == null || paging.getSize() == null || paging.getSize() < 1 ? 10 : paging.getSize();
         long total = executeCount(sqlSession, sql, args);
         if (total == 0L) {
             return new Page<>(current, size, 0L, List.of());

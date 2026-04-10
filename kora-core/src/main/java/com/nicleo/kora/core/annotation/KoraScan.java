@@ -11,4 +11,6 @@ public @interface KoraScan {
     String[] xml();
 
     String[] entity();
+
+    String[] mapper() default {};
 }

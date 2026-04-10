@@ -1,8 +1,6 @@
 package com.example.simple.entity;
 
 import com.nicleo.kora.core.annotation.Alias;
-import com.nicleo.kora.core.annotation.Reflect;
-import com.nicleo.kora.core.annotation.ReflectMetadataLevel;
 import lombok.Getter;
 import lombok.Setter;
 

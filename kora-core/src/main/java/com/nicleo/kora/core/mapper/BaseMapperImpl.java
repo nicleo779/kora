@@ -8,6 +8,7 @@ import com.nicleo.kora.core.query.WhereWrapper;
 import com.nicleo.kora.core.runtime.AbstractMapper;
 import com.nicleo.kora.core.runtime.GeneratedReflector;
 import com.nicleo.kora.core.runtime.GeneratedReflectors;
+import com.nicleo.kora.core.runtime.DefaultIdGenerator;
 import com.nicleo.kora.core.runtime.SqlExecutionContext;
 import com.nicleo.kora.core.runtime.SqlRequest;
 import com.nicleo.kora.core.runtime.SqlSession;
@@ -192,6 +193,7 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
         GeneratedReflector<T> reflector = GeneratedReflectors.get(entityClass);
         List<String> columns = new ArrayList<>();
         List<Object> args = new ArrayList<>();
+        appendInsertId(entity, reflector, columns, args);
         for (String field : reflector.getFields()) {
             if (isIdField(field)) {
                 continue;
@@ -214,6 +216,26 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
         appendPlaceholders(sql, columns.size());
         sql.append(')');
         return new InsertSpec(sql.toString(), args.toArray());
+    }
+
+    private void appendInsertId(T entity, GeneratedReflector<T> reflector, List<String> columns, List<Object> args) {
+        if (entityTable.idStrategy() == com.nicleo.kora.core.annotation.IdStrategy.NONE) {
+            return;
+        }
+        String idFieldName = idFieldName();
+        Object idValue = reflector.get(entity, idFieldName);
+        if (idValue == null) {
+            idValue = generateId(entity);
+        }
+        if (idValue != null) {
+            reflector.set(entity, idFieldName, idValue);
+            columns.add(entityTable.idColumn().columnName());
+            args.add(idValue);
+        }
+    }
+
+    private Object generateId(T entity) {
+        return DefaultIdGenerator.INSTANCE.generate(sqlSession, entityTable, entity);
     }
 
     private UpdateByIdSpec buildUpdateByIdSpec(T entity) {

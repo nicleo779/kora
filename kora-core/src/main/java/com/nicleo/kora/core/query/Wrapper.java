@@ -4,7 +4,7 @@ public final class Wrapper {
     private Wrapper() {
     }
 
-    public static <T> QueryWrapper<T> of() {
+    public static <T> QueryWrapper<T> query() {
         return new QueryWrapper<>();
     }
 

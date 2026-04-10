@@ -8,7 +8,10 @@ import com.example.simple.entity.User;
 import com.example.simple.common.ReadMapper;
 import com.example.simple.mapper.UserMapper;
 import com.example.simple.mapper.UserMapperImpl;
+import com.example.simple.mapper.PlainUserMapper;
+import com.example.simple.mapper.PlainUserMapperImpl;
 import com.example.simple.query.UserTable;
+import com.nicleo.kora.core.annotation.IdStrategy;
 import com.nicleo.kora.core.mapper.BaseMapper;
 import com.nicleo.kora.core.query.Page;
 import com.nicleo.kora.core.query.Paging;
@@ -16,6 +19,7 @@ import com.nicleo.kora.core.query.Wrapper;
 import com.nicleo.kora.core.runtime.FieldInfo;
 import com.nicleo.kora.core.runtime.GeneratedReflector;
 import com.nicleo.kora.core.runtime.GeneratedReflectors;
+import com.nicleo.kora.core.runtime.IdGenerator;
 import com.nicleo.kora.core.runtime.MethodInfo;
 import com.nicleo.kora.core.runtime.SqlExecutionContext;
 import com.nicleo.kora.core.runtime.SqlInterceptor;
@@ -32,6 +36,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -51,6 +56,7 @@ class SimpleIntegrationTest {
         dataSource.setUser("sa");
         dataSource.setPassword("");
         this.sqlSession = new DefaultSqlSession(dataSource);
+        this.sqlSession.setIdGenerator(new TestSessionIdGenerator());
         this.userMapper = new UserMapperImpl(sqlSession);
 
         try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
@@ -63,10 +69,11 @@ class SimpleIntegrationTest {
     @Test
     void generatedMapperAndMetaShouldWork() {
         assertEquals("users", UserTable.USERS.tableName());
-        assertEquals("id", UserTable.USERS.ID.columnName());
-        assertEquals("name", UserTable.USERS.NAME.columnName());
-        assertEquals("age", UserTable.USERS.AGE.columnName());
-        assertEquals("login_name", UserTable.USERS.USER_NAME.columnName());
+        assertEquals("id", UserTable.USERS.id.columnName());
+        assertEquals("name", UserTable.USERS.name.columnName());
+        assertEquals("age", UserTable.USERS.age.columnName());
+        assertEquals("login_name", UserTable.USERS.userName.columnName());
+        assertEquals(IdStrategy.CUSTOM, UserTable.USERS.idStrategy());
         User alice = userMapper.selectById(1L);
         assertNotNull(alice);
         assertEquals(1L, alice.getId());
@@ -96,15 +103,15 @@ class SimpleIntegrationTest {
         List<User> wrapped = userMapper.selectList(
                 Wrapper.<User>where()
                         .where(where -> where
-                                .ge(minAge != null, UserTable.USERS.AGE, minAge)
-                                .le(maxAge != null, UserTable.USERS.AGE, maxAge))
-                        .orderBy(order -> order.asc(UserTable.USERS.ID))
+                                .ge(minAge != null, UserTable.USERS.age, minAge)
+                                .le(maxAge != null, UserTable.USERS.age, maxAge))
+                        .orderBy(order -> order.asc(UserTable.USERS.id))
         );
         assertEquals(List.of("Bob", "Cindy"), wrapped.stream().map(User::getName).toList());
 
         User wrappedOne = userMapper.selectOne(
                 Wrapper.<User>where()
-                        .where(where -> where.eq(UserTable.USERS.ID, 2L))
+                        .where(where -> where.eq(UserTable.USERS.id, 2L))
                         .limit(1)
         );
         assertNotNull(wrappedOne);
@@ -125,22 +132,22 @@ class SimpleIntegrationTest {
         assertEquals(List.of("Alicia", "Cindy"), selectedByIds.stream().map(User::getName).toList());
 
         Paging paging = new Paging();
-        paging.setIndex(1L);
-        paging.setSize(2L);
+        paging.setIndex(1);
+        paging.setSize(2);
         Page<User> page = baseMapper.page(
                 paging,
                 Wrapper.<User>where()
-                        .orderBy(order -> order.asc(UserTable.USERS.ID))
+                        .orderBy(order -> order.asc(UserTable.USERS.id))
         );
-        assertEquals(1L, page.current());
+        assertEquals(1, page.current());
         assertEquals(4L, page.total());
         assertEquals(List.of("Alicia", "Bob"), page.records().stream().map(User::getName).toList());
 
         Paging xmlPaging = new Paging();
-        xmlPaging.setIndex(2L);
-        xmlPaging.setSize(2L);
+        xmlPaging.setIndex(2);
+        xmlPaging.setSize(2);
         Page<User> xmlPage = userMapper.selectPage(xmlPaging, 18, 30);
-        assertEquals(2L, xmlPage.current());
+        assertEquals(2, xmlPage.current());
         assertEquals(4L, xmlPage.total());
         assertEquals(List.of("Cindy", "Dylan"), xmlPage.records().stream().map(User::getName).toList());
 
@@ -154,8 +161,8 @@ class SimpleIntegrationTest {
 
         assertEquals(1, baseMapper.update(
                 Wrapper.<User>update()
-                        .set(UserTable.USERS.NAME, "Bobby")
-                        .where(where -> where.eq(UserTable.USERS.ID, 2L))
+                        .set(UserTable.USERS.name, "Bobby")
+                        .where(where -> where.eq(UserTable.USERS.id, 2L))
                         .limit(1)
         ));
         assertEquals("Bobby", userMapper.selectById(2L).getName());
@@ -179,9 +186,21 @@ class SimpleIntegrationTest {
 
         assertEquals(2, baseMapper.delete(
                 Wrapper.<User>where()
-                        .where(where -> where.in(UserTable.USERS.ID, List.of(6L, 7L)))
+                        .where(where -> where.in(UserTable.USERS.id, List.of(6L, 7L)))
         ));
         assertEquals(4, userMapper.selectByAgeRange(null, null).size());
+    }
+
+    @Test
+    void mapperWithoutXmlShouldStillSupportBaseMapperCapabilities() {
+        PlainUserMapper plainUserMapper = new PlainUserMapperImpl(sqlSession);
+
+        User alice = plainUserMapper.selectById(1L);
+        assertNotNull(alice);
+        assertEquals("Alice", alice.getName());
+
+        assertEquals(1, plainUserMapper.insert(new User(null, "Henry", 29, "henry_08")));
+        assertEquals("Henry", plainUserMapper.selectById(4L).getName());
     }
 
     @Test
@@ -261,5 +280,14 @@ class SimpleIntegrationTest {
         UserSummary summary = summaryReflector.newInstance();
         summaryReflector.set(summary, "name", "Demo");
         assertEquals("Demo", summary.getName());
+    }
+
+    private static final class TestSessionIdGenerator implements IdGenerator {
+        private final AtomicLong sequence = new AtomicLong(3);
+
+        @Override
+        public Object generate(SqlSession sqlSession, com.nicleo.kora.core.query.EntityTable<?> entityTable, Object entity) {
+            return sequence.incrementAndGet();
+        }
     }
 }

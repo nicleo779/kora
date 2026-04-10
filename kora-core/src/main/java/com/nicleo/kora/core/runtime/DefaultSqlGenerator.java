@@ -1,6 +1,5 @@
 package com.nicleo.kora.core.runtime;
 
-import com.nicleo.kora.core.query.Column;
 import com.nicleo.kora.core.query.EntityTable;
 import com.nicleo.kora.core.query.Order;
 import com.nicleo.kora.core.query.QueryDefinition;
@@ -20,24 +19,33 @@ public class DefaultSqlGenerator implements SqlGenerator {
         if (definition.selectAll() || definition.selectExpressions().isEmpty()) {
             sql.append(definition.from().qualifier()).append(".*");
         } else {
-            sql.append(String.join(", ", definition.selectExpressions()));
+            for (int i = 0; i < definition.selectExpressions().size(); i++) {
+                if (i > 0) {
+                    sql.append(", ");
+                }
+                definition.selectExpressions().get(i).appendTo(sql, args, dbType);
+            }
         }
         sql.append(" FROM ").append(definition.from().tableReference());
         for (QueryJoin join : definition.joins()) {
             sql.append(' ').append(join.joinType()).append(' ').append(join.table().tableReference()).append(" ON ");
-            join.on().appendTo(sql, args);
+            join.on().appendTo(sql, args, dbType);
         }
-        if (!definition.groupByColumns().isEmpty()) {
+        if (!definition.groupByExpressions().isEmpty()) {
             sql.append(" GROUP BY ");
-            for (int i = 0; i < definition.groupByColumns().size(); i++) {
+            for (int i = 0; i < definition.groupByExpressions().size(); i++) {
                 if (i > 0) {
                     sql.append(", ");
                 }
-                sql.append(definition.groupByColumns().get(i).expression());
+                definition.groupByExpressions().get(i).appendTo(sql, args, dbType);
             }
         }
-        appendWhere(sql, args, definition.where());
-        appendOrder(sql, definition.where());
+        appendWhere(sql, args, definition.where(), dbType);
+        if (definition.having() != null) {
+            sql.append(" HAVING ");
+            definition.having().appendTo(sql, args, dbType);
+        }
+        appendOrder(sql, args, definition.where(), dbType);
         appendLimit(sql, args, definition.where(), dbType, false);
         return new SqlRequest(sql.toString(), args.toArray());
     }
@@ -46,8 +54,8 @@ public class DefaultSqlGenerator implements SqlGenerator {
     public SqlRequest renderSelect(EntityTable<?> table, WhereDefinition whereDefinition, DbType dbType) {
         List<Object> args = new ArrayList<>();
         StringBuilder sql = new StringBuilder("select * from ").append(table.tableName());
-        appendWhere(sql, args, whereDefinition);
-        appendOrder(sql, whereDefinition);
+        appendWhere(sql, args, whereDefinition, dbType);
+        appendOrder(sql, args, whereDefinition, dbType);
         appendLimit(sql, args, whereDefinition, dbType, false);
         return new SqlRequest(sql.toString(), args.toArray());
     }
@@ -56,8 +64,8 @@ public class DefaultSqlGenerator implements SqlGenerator {
     public SqlRequest renderDelete(EntityTable<?> table, WhereDefinition whereDefinition, DbType dbType) {
         List<Object> args = new ArrayList<>();
         StringBuilder sql = new StringBuilder("delete from ").append(table.tableName());
-        appendWhere(sql, args, whereDefinition);
-        appendOrder(sql, whereDefinition);
+        appendWhere(sql, args, whereDefinition, dbType);
+        appendOrder(sql, args, whereDefinition, dbType);
         appendLimit(sql, args, whereDefinition, dbType, true);
         return new SqlRequest(sql.toString(), args.toArray());
     }
@@ -71,23 +79,23 @@ public class DefaultSqlGenerator implements SqlGenerator {
                 sql.append(", ");
             }
             UpdateAssignment assignment = updateDefinition.assignments().get(i);
-            sql.append(assignment.columnName()).append(" = ?");
-            args.add(assignment.value());
+            sql.append(assignment.column().columnName()).append(" = ");
+            assignment.value().appendTo(sql, args, dbType);
         }
-        appendWhere(sql, args, updateDefinition.where());
-        appendOrder(sql, updateDefinition.where());
+        appendWhere(sql, args, updateDefinition.where(), dbType);
+        appendOrder(sql, args, updateDefinition.where(), dbType);
         appendLimit(sql, args, updateDefinition.where(), dbType, true);
         return new SqlRequest(sql.toString(), args.toArray());
     }
 
-    private void appendWhere(StringBuilder sql, List<Object> args, WhereDefinition whereDefinition) {
+    private void appendWhere(StringBuilder sql, List<Object> args, WhereDefinition whereDefinition, DbType dbType) {
         if (whereDefinition != null && whereDefinition.condition() != null) {
             sql.append(" WHERE ");
-            whereDefinition.condition().appendTo(sql, args);
+            whereDefinition.condition().appendTo(sql, args, dbType);
         }
     }
 
-    private void appendOrder(StringBuilder sql, WhereDefinition whereDefinition) {
+    private void appendOrder(StringBuilder sql, List<Object> args, WhereDefinition whereDefinition, DbType dbType) {
         if (whereDefinition == null || whereDefinition.orders().isEmpty()) {
             return;
         }
@@ -97,7 +105,7 @@ public class DefaultSqlGenerator implements SqlGenerator {
             if (i > 0) {
                 sql.append(", ");
             }
-            orders.get(i).appendTo(sql);
+            orders.get(i).appendTo(sql, args, dbType);
         }
     }
 

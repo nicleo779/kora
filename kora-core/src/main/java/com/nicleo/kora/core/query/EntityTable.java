@@ -1,5 +1,8 @@
 package com.nicleo.kora.core.query;
 
+import com.nicleo.kora.core.annotation.IdStrategy;
+import com.nicleo.kora.core.runtime.IdGenerator;
+
 public abstract class EntityTable<T> {
     private final Class<T> entityType;
     private final String tableName;
@@ -37,6 +40,14 @@ public abstract class EntityTable<T> {
 
     protected final <V> Column<T, V> column(String columnName, Class<V> javaType) {
         return new Column<>(this, columnName, javaType);
+    }
+
+    public IdStrategy idStrategy() {
+        return IdStrategy.NONE;
+    }
+
+    public IdGenerator idGenerator() {
+        return null;
     }
 
     public abstract <V> Column<T, V> idColumn();

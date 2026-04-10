@@ -4,6 +4,7 @@ import java.util.List;
 
 import javax.sql.DataSource;
 
+import com.nicleo.kora.core.runtime.*;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -12,14 +13,6 @@ import org.springframework.context.annotation.Scope;
 import org.springframework.context.annotation.Bean;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 
-import com.nicleo.kora.core.runtime.DefaultSqlPagingSupport;
-import com.nicleo.kora.core.runtime.DefaultSqlGenerator;
-import com.nicleo.kora.core.runtime.DbType;
-import com.nicleo.kora.core.runtime.SqlInterceptor;
-import com.nicleo.kora.core.runtime.SqlPagingSupport;
-import com.nicleo.kora.core.runtime.SqlGenerator;
-import com.nicleo.kora.core.runtime.SqlSession;
-import com.nicleo.kora.core.runtime.SqlSessionFactory;
 import com.nicleo.kora.spring.boot.SpringTransactionSqlSession;
 import com.nicleo.kora.spring.boot.Sql;
 
@@ -47,19 +40,16 @@ public class KoraAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public SqlSessionFactory sqlSessionFactory(DataSource dataSource,
-                                               SqlPagingSupport sqlPagingSupport,
-                                               SqlGenerator sqlGenerator,
-                                               DbType dbType,
-                                               ObjectProvider<SqlInterceptor> interceptors) {
+                                               ObjectProvider<TypeConverter> typeConverter,
+                                               ObjectProvider<SqlPagingSupport> sqlPagingSupport,
+                                               ObjectProvider<SqlGenerator> sqlGenerator,
+                                               ObjectProvider<List<SqlInterceptor>> interceptors) {
         return () -> {
             SpringTransactionSqlSession sqlSession = new SpringTransactionSqlSession(dataSource);
-            sqlSession.setSqlPagingSupport(sqlPagingSupport);
-            sqlSession.setSqlGenerator(sqlGenerator);
-            sqlSession.setDbType(dbType);
-            List<SqlInterceptor> interceptorList = interceptors.orderedStream().toList();
-            if (!interceptorList.isEmpty()) {
-                sqlSession.addInterceptor(interceptorList);
-            }
+            sqlPagingSupport.ifAvailable(sqlSession::setSqlPagingSupport);
+            sqlGenerator.ifAvailable(sqlSession::setSqlGenerator);
+            typeConverter.ifAvailable(sqlSession::setTypeConverter);
+            interceptors.ifAvailable(sqlSession::addInterceptor);
             return sqlSession;
         };
     }

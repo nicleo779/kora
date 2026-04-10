@@ -1,6 +1,5 @@
 package com.nicleo.kora.core.runtime.jdbc;
 
-import com.nicleo.kora.core.annotation.Alias;
 import com.nicleo.kora.core.runtime.FieldInfo;
 import com.nicleo.kora.core.runtime.GeneratedReflector;
 import com.nicleo.kora.core.runtime.RowMapper;
@@ -9,7 +8,6 @@ import com.nicleo.kora.core.runtime.TypeConverter;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
-import java.lang.annotation.Annotation;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.HashMap;
@@ -83,10 +81,8 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
                 continue;
             }
             mapping.putIfAbsent(normalizeColumnLabel(fieldName), fieldName);
-            for (Annotation annotation : fieldInfo.annotations()) {
-                if (annotation instanceof Alias alias) {
-                    mapping.put(normalizeColumnLabel(alias.value()), fieldName);
-                }
+            if (fieldInfo.alias() != null && !fieldInfo.alias().isBlank()) {
+                mapping.put(normalizeColumnLabel(fieldInfo.alias()), fieldName);
             }
         }
         return mapping;

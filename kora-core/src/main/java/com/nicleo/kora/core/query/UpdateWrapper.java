@@ -15,8 +15,16 @@ public final class UpdateWrapper<T> {
     }
 
     public <V> UpdateWrapper<T> set(boolean include, Column<T, V> column, V value) {
+        return set(include, column, Expressions.literal(value));
+    }
+
+    public UpdateWrapper<T> set(Column<T, ?> column, SqlExpression value) {
+        return set(true, column, value);
+    }
+
+    public UpdateWrapper<T> set(boolean include, Column<T, ?> column, SqlExpression value) {
         if (include) {
-            assignments.add(new UpdateAssignment(column.columnName(), value));
+            assignments.add(new UpdateAssignment(column, value));
         }
         return this;
     }

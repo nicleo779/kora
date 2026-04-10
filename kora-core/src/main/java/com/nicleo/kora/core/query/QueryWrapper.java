@@ -8,17 +8,16 @@ import java.util.Objects;
 import java.util.function.Consumer;
 
 public final class QueryWrapper<T> {
-    private final List<String> selectExpressions = new ArrayList<>();
+    private final List<SqlExpression> selectExpressions = new ArrayList<>();
     private final List<JoinSpec> joins = new ArrayList<>();
-    private final List<Column<?, ?>> groupByColumns = new ArrayList<>();
+    private final List<SqlExpression> groupByExpressions = new ArrayList<>();
     private final WhereWrapper<T> whereWrapper = new WhereWrapper<>();
+    private Condition having;
     private EntityTable<?> from;
     private boolean selectAll;
 
-    public QueryWrapper<T> select(Column<?, ?>... columns) {
-        for (Column<?, ?> column : columns) {
-            selectExpressions.add(column.expression());
-        }
+    public QueryWrapper<T> select(SqlExpression... expressions) {
+        selectExpressions.addAll(List.of(expressions));
         return this;
     }
 
@@ -36,14 +35,29 @@ public final class QueryWrapper<T> {
         return new JoinStep<>(this, "LEFT JOIN", table);
     }
 
+    public JoinStep<T> innerJoin(EntityTable<?> table) {
+        return new JoinStep<>(this, "INNER JOIN", table);
+    }
+
+    public JoinStep<T> rightJoin(EntityTable<?> table) {
+        return new JoinStep<>(this, "RIGHT JOIN", table);
+    }
+
     public QueryWrapper<T> where(Consumer<PredicateBuilder> consumer) {
         whereWrapper.where(consumer);
         return this;
     }
 
-    public QueryWrapper<T> groupBy(Column<?, ?>... columns) {
-        groupByColumns.clear();
-        groupByColumns.addAll(List.of(columns));
+    public QueryWrapper<T> groupBy(SqlExpression... expressions) {
+        groupByExpressions.clear();
+        groupByExpressions.addAll(List.of(expressions));
+        return this;
+    }
+
+    public QueryWrapper<T> having(Consumer<PredicateBuilder> consumer) {
+        PredicateBuilder builder = new PredicateBuilder();
+        consumer.accept(builder);
+        this.having = builder.build();
         return this;
     }
 
@@ -71,7 +85,8 @@ public final class QueryWrapper<T> {
                 selectAll,
                 from,
                 joins.stream().map(join -> new QueryJoin(join.joinType(), join.table(), join.on())).toList(),
-                List.copyOf(groupByColumns),
+                List.copyOf(groupByExpressions),
+                having,
                 whereWrapper.toDefinition()
         );
     }
@@ -94,6 +109,12 @@ public final class QueryWrapper<T> {
         public QueryWrapper<T> on(Condition condition) {
             owner.addJoin(joinType, table, condition);
             return owner;
+        }
+
+        public QueryWrapper<T> on(Consumer<PredicateBuilder> consumer) {
+            PredicateBuilder builder = new PredicateBuilder();
+            consumer.accept(builder);
+            return on(builder.build());
         }
     }
 

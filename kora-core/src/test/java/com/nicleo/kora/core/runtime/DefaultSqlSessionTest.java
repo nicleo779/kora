@@ -1,12 +1,10 @@
 package com.nicleo.kora.core.runtime;
 
-import com.nicleo.kora.core.annotation.Alias;
 import com.nicleo.kora.core.runtime.jdbc.DefaultSqlSession;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.lang.annotation.Annotation;
 import java.io.PrintWriter;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -59,6 +57,11 @@ class DefaultSqlSessionTest {
         assertEquals(1L, user.getId());
         assertEquals("Alice", user.getUserName());
         assertEquals(18, user.getAge());
+    }
+
+    @Test
+    void dbTypeShouldBeInferredFromDataSource() {
+        assertEquals(DbType.H2, sqlSession.getDbType());
     }
 
     @Test
@@ -219,7 +222,22 @@ class DefaultSqlSessionTest {
                 "update user_account set created_at = ? where id = ?",
                 new Object[]{Timestamp.valueOf(LocalDateTime.of(2024, 1, 2, 3, 4, 5)), 1L}
         );
-        sqlSession.registerTypeConverter(LocalDateTime.class, value -> ((Timestamp) value).toLocalDateTime());
+        sqlSession.registerTypeConverter(new CustomTypeConverter() {
+            @Override
+            public boolean supports(Class<?> targetType) {
+                return targetType == LocalDateTime.class;
+            }
+
+            @Override
+            public Object fromDb(Object value, Class<?> targetType) {
+                return ((Timestamp) value).toLocalDateTime();
+            }
+
+            @Override
+            public Object toDb(Object value, Class<?> targetType) {
+                return Timestamp.valueOf((LocalDateTime) value);
+            }
+        });
 
         TimeUserAccount user = sqlSession.selectOne(
                 "select id, user_name, age, created_at from user_account where id = ?",
@@ -238,7 +256,22 @@ class DefaultSqlSessionTest {
                 "update user_account set created_at = ? where id = ?",
                 new Object[]{Timestamp.valueOf(LocalDateTime.of(2024, 1, 2, 3, 4, 5)), 1L}
         );
-        sqlSession.registerTypeConverter(LocalDateTime.class, value -> ((Timestamp) value).toLocalDateTime());
+        sqlSession.registerTypeConverter(new CustomTypeConverter() {
+            @Override
+            public boolean supports(Class<?> targetType) {
+                return targetType == LocalDateTime.class;
+            }
+
+            @Override
+            public Object fromDb(Object value, Class<?> targetType) {
+                return ((Timestamp) value).toLocalDateTime();
+            }
+
+            @Override
+            public Object toDb(Object value, Class<?> targetType) {
+                return Timestamp.valueOf((LocalDateTime) value);
+            }
+        });
         DefaultSqlSession isolatedSession = new DefaultSqlSession(dataSource);
 
         TimeUserAccount converted = sqlSession.selectOne(
@@ -259,6 +292,42 @@ class DefaultSqlSessionTest {
         } else {
             assertEquals(ClassCastException.class, ex.getClass());
         }
+    }
+
+    @Test
+    void customTypeConverterShouldConvertFieldValueToDbOnWrite() {
+        sqlSession.update("alter table user_account add column created_at timestamp", new Object[0]);
+        sqlSession.registerTypeConverter(new CustomTypeConverter() {
+            @Override
+            public boolean supports(Class<?> targetType) {
+                return targetType == LocalDateTime.class;
+            }
+
+            @Override
+            public Object fromDb(Object value, Class<?> targetType) {
+                return ((Timestamp) value).toLocalDateTime();
+            }
+
+            @Override
+            public Object toDb(Object value, Class<?> targetType) {
+                return Timestamp.valueOf((LocalDateTime) value);
+            }
+        });
+
+        LocalDateTime createdAt = LocalDateTime.of(2025, 1, 2, 3, 4, 5);
+        sqlSession.update(
+                "update user_account set created_at = ? where id = ?",
+                new Object[]{createdAt, 1L}
+        );
+
+        TimeUserAccount user = sqlSession.selectOne(
+                "select id, user_name, age, created_at from user_account where id = ?",
+                new Object[]{1L},
+                TimeUserAccount.class
+        );
+
+        assertNotNull(user);
+        assertEquals(createdAt, user.getCreatedAt());
     }
 
     @Test
@@ -467,9 +536,9 @@ class DefaultSqlSessionTest {
 
     static final class UserAccountGeneratedReflector implements GeneratedReflector<UserAccount> {
         private static final FieldInfo[] FIELDS = new FieldInfo[]{
-                new FieldInfo("id", Long.class, 0, new java.lang.annotation.Annotation[0]),
-                new FieldInfo("userName", String.class, 0, new java.lang.annotation.Annotation[]{alias("login_name")}),
-                new FieldInfo("age", Integer.class, 0, new java.lang.annotation.Annotation[0])
+                new FieldInfo("id", Long.class, 0, null, new java.lang.annotation.Annotation[0]),
+                new FieldInfo("userName", String.class, 0, "login_name", new java.lang.annotation.Annotation[0]),
+                new FieldInfo("age", Integer.class, 0, null, new java.lang.annotation.Annotation[0])
         };
 
         @Override
@@ -526,7 +595,7 @@ class DefaultSqlSessionTest {
 
     static final class CountResultGeneratedReflector implements GeneratedReflector<CountResult> {
         private static final FieldInfo[] FIELDS = new FieldInfo[]{
-                new FieldInfo("total", Long.class, 0, new java.lang.annotation.Annotation[0])
+                new FieldInfo("total", Long.class, 0, null, new java.lang.annotation.Annotation[0])
         };
 
         @Override
@@ -572,10 +641,10 @@ class DefaultSqlSessionTest {
 
     static final class TimeUserAccountGeneratedReflector implements GeneratedReflector<TimeUserAccount> {
         private static final FieldInfo[] FIELDS = new FieldInfo[]{
-                new FieldInfo("id", Long.class, 0, new java.lang.annotation.Annotation[0]),
-                new FieldInfo("userName", String.class, 0, new java.lang.annotation.Annotation[]{alias("login_name")}),
-                new FieldInfo("age", Integer.class, 0, new java.lang.annotation.Annotation[0]),
-                new FieldInfo("createdAt", LocalDateTime.class, 0, new java.lang.annotation.Annotation[0])
+                new FieldInfo("id", Long.class, 0, null, new java.lang.annotation.Annotation[0]),
+                new FieldInfo("userName", String.class, 0, "login_name", new java.lang.annotation.Annotation[0]),
+                new FieldInfo("age", Integer.class, 0, null, new java.lang.annotation.Annotation[0]),
+                new FieldInfo("createdAt", LocalDateTime.class, 0, null, new java.lang.annotation.Annotation[0])
         };
 
         @Override
@@ -634,17 +703,4 @@ class DefaultSqlSessionTest {
         }
     }
 
-    private static Annotation alias(String value) {
-        return new Alias() {
-            @Override
-            public String value() {
-                return value;
-            }
-
-            @Override
-            public Class<? extends Annotation> annotationType() {
-                return Alias.class;
-            }
-        };
-    }
 }

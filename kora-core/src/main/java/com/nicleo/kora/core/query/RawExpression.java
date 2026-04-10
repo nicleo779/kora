@@ -4,9 +4,9 @@ import com.nicleo.kora.core.runtime.DbType;
 
 import java.util.List;
 
-public record Order(SqlExpression expression, boolean ascending) {
+record RawExpression(String value) implements SqlExpression {
+    @Override
     public void appendTo(StringBuilder sql, List<Object> args, DbType dbType) {
-        expression.appendTo(sql, args, dbType);
-        sql.append(ascending ? " ASC" : " DESC");
+        sql.append(value);
     }
 }

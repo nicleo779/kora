@@ -7,6 +7,7 @@ import com.nicleo.kora.core.runtime.RowMapper;
 import com.nicleo.kora.core.runtime.DefaultSqlPagingSupport;
 import com.nicleo.kora.core.runtime.DefaultSqlGenerator;
 import com.nicleo.kora.core.runtime.DbType;
+import com.nicleo.kora.core.runtime.IdGenerator;
 import com.nicleo.kora.core.runtime.SqlPagingSupport;
 import com.nicleo.kora.core.runtime.SqlGenerator;
 import com.nicleo.kora.core.runtime.SqlExecutionContext;
@@ -26,10 +27,11 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class DefaultSqlSession implements SqlSession {
     private final DataSource dataSource;
-    private final TypeConverter typeConverter;
+    private TypeConverter typeConverter;
     private SqlPagingSupport sqlPagingSupport;
     private SqlGenerator sqlGenerator;
     private DbType dbType;
+    private IdGenerator idGenerator;
     private final List<SqlInterceptor> interceptors;
     private final Map<CacheKey, List<?>> localCache = new ConcurrentHashMap<>();
     protected Connection connection;
@@ -39,7 +41,6 @@ public class DefaultSqlSession implements SqlSession {
         this.typeConverter = new TypeConverter();
         this.sqlPagingSupport = new DefaultSqlPagingSupport();
         this.sqlGenerator = new DefaultSqlGenerator();
-        this.dbType = DbType.MYSQL;
         this.interceptors = new ArrayList<>();
     }
 
@@ -117,12 +118,34 @@ public class DefaultSqlSession implements SqlSession {
     }
 
     @Override
+    public void setTypeConverter(TypeConverter typeConverter) {
+        this.typeConverter = typeConverter;
+    }
+
+    @Override
+    public IdGenerator getIdGenerator() {
+        return idGenerator;
+    }
+
+    @Override
+    public void setIdGenerator(IdGenerator idGenerator) {
+        this.idGenerator = idGenerator;
+    }
+
+    @Override
     public SqlPagingSupport getSqlPagingSupport() {
         return sqlPagingSupport;
     }
 
     @Override
     public DbType getDbType() {
+        if (dbType == null) {
+            try {
+                dbType = inferDbType(currentConnection());
+            } catch (SQLException ex) {
+                throw new SqlSessionException("Failed to open connection for DbType inference", ex);
+            }
+        }
         return dbType;
     }
 
@@ -241,7 +264,7 @@ public class DefaultSqlSession implements SqlSession {
             return;
         }
         for (int i = 0; i < args.length; i++) {
-            statement.setObject(i + 1, args[i]);
+            statement.setObject(i + 1, typeConverter.toDbValue(args[i]));
         }
     }
 
@@ -257,6 +280,64 @@ public class DefaultSqlSession implements SqlSession {
 
     protected void releaseConnection(Connection connection) throws SQLException {
         connection.close();
+    }
+
+    private DbType inferDbType(Connection connection) {
+        try {
+            String url = connection.getMetaData().getURL();
+            if (url != null) {
+                String normalized = url.toLowerCase(Locale.ROOT);
+                if (normalized.startsWith("jdbc:h2:")) {
+                    return DbType.H2;
+                }
+                if (normalized.startsWith("jdbc:mysql:")) {
+                    return DbType.MYSQL;
+                }
+                if (normalized.startsWith("jdbc:postgresql:")) {
+                    return DbType.POSTGRESQL;
+                }
+                if (normalized.startsWith("jdbc:mariadb:")) {
+                    return DbType.MARIADB;
+                }
+                if (normalized.startsWith("jdbc:sqlite:")) {
+                    return DbType.SQLITE;
+                }
+                if (normalized.startsWith("jdbc:oracle:")) {
+                    return DbType.ORACLE;
+                }
+                if (normalized.startsWith("jdbc:sqlserver:")) {
+                    return DbType.SQLSERVER;
+                }
+            }
+            String productName = connection.getMetaData().getDatabaseProductName();
+            if (productName != null) {
+                String normalized = productName.toLowerCase(Locale.ROOT);
+                if (normalized.contains("h2")) {
+                    return DbType.H2;
+                }
+                if (normalized.contains("mysql")) {
+                    return DbType.MYSQL;
+                }
+                if (normalized.contains("postgresql")) {
+                    return DbType.POSTGRESQL;
+                }
+                if (normalized.contains("mariadb")) {
+                    return DbType.MARIADB;
+                }
+                if (normalized.contains("sqlite")) {
+                    return DbType.SQLITE;
+                }
+                if (normalized.contains("oracle")) {
+                    return DbType.ORACLE;
+                }
+                if (normalized.contains("sql server")) {
+                    return DbType.SQLSERVER;
+                }
+            }
+            return DbType.MYSQL;
+        } catch (SQLException ex) {
+            throw new SqlSessionException("Failed to infer DbType from DataSource", ex);
+        }
     }
 
     private record CacheKey(String sql, Object[] args, Class<?> resultType) {

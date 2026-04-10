@@ -12,9 +12,17 @@ public interface SqlSession extends AutoCloseable {
     int[] executeBatch(String sql, List<Object[]> batchArgs);
 
     TypeConverter getTypeConverter();
+    void setTypeConverter(TypeConverter typeConverter);
+    default IdGenerator getIdGenerator() {
+        return null;
+    }
 
-    default <T> void registerTypeConverter(Class<T> targetType, CustomTypeConverter<? extends T> converter) {
-        getTypeConverter().register(targetType, converter);
+    default void setIdGenerator(IdGenerator idGenerator) {
+        throw new SqlSessionException("IdGenerator is not configurable for session: " + getClass().getName());
+    }
+
+    default void registerTypeConverter(CustomTypeConverter converter) {
+        getTypeConverter().register(converter);
     }
 
     default void clearTypeConverters() {
