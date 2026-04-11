@@ -36,7 +36,7 @@
 - `Page<T>` 分页
 - `Map<String, Object>`、基础类型、实体映射
 - Spring Boot 自动注册 `SqlSessionFactory`、`SqlSession`、Mapper Bean
-- 静态 `Sql.of(query)` 查询入口
+- 静态 `Sql.query()` / `Sql.from(...)` / `Sql.select(...)` 查询入口
 - SQL Dialect SPI
 
 ## 环境
@@ -390,13 +390,48 @@ dependencies {
 ### 静态查询入口
 
 ```java
-var query = Wrapper.query()
+User user = Sql.query()
         .selectAll()
         .from(UserTable.TABLE)
         .orderBy(order -> order.asc(UserTable.TABLE.id))
-        .limit(1);
+        .limit(1)
+        .one(User.class);
+```
 
-User user = Sql.of(query).one(User.class);
+也支持更短的查询入口：
+
+```java
+User user = Sql.from(UserTable.TABLE)
+        .where(UserTable.TABLE.id.eq(1L))
+        .one(User.class);
+```
+
+```java
+User user = Sql.select(UserTable.TABLE, UserTable.TABLE.id.eq(1L));
+List<User> users = Sql.selectList(
+        UserTable.TABLE,
+        UserTable.TABLE.age.ge(18),
+        UserTable.TABLE.name.isNotNull()
+);
+```
+
+说明：
+
+- `Sql.query()`
+  从空查询开始，适合复杂 DSL 组合
+- `Sql.from(table)`
+  默认 `selectAll().from(table)`，适合从单表快速起查询
+- `Sql.select(table, conditions...)`
+  默认单条查询语义，内部会执行 `.one(table.entityType())`
+- `Sql.selectList(table, conditions...)`
+  默认多条查询语义，内部会执行 `.list(table.entityType())`
+
+也支持直接静态 CRUD：
+
+```java
+Sql.insert(user);
+Sql.updateById(user);
+Sql.deleteById(User.class, 1L);
 ```
 
 ## 构建与测试

@@ -15,6 +15,7 @@ import com.nicleo.kora.core.annotation.IdStrategy;
 import com.nicleo.kora.core.mapper.BaseMapper;
 import com.nicleo.kora.core.query.Page;
 import com.nicleo.kora.core.query.Paging;
+import com.nicleo.kora.core.query.Tables;
 import com.nicleo.kora.core.query.Wrapper;
 import com.nicleo.kora.core.runtime.FieldInfo;
 import com.nicleo.kora.core.runtime.GeneratedReflector;
@@ -71,6 +72,7 @@ class SimpleIntegrationTest {
     @Test
     void generatedMapperAndMetaShouldWork() {
         assertEquals("users", UserTable.TABLE.tableName());
+        assertSame(UserTable.TABLE, Tables.get(User.class));
         assertEquals("id", UserTable.TABLE.id.columnName());
         assertEquals("name", UserTable.TABLE.name.columnName());
         assertEquals("age", UserTable.TABLE.age.columnName());

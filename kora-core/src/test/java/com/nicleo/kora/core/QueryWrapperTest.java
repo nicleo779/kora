@@ -4,6 +4,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import org.junit.jupiter.api.Test;
 
 import com.nicleo.kora.core.query.Column;
@@ -11,10 +12,18 @@ import com.nicleo.kora.core.query.Conditions;
 import com.nicleo.kora.core.query.EntityTable;
 import com.nicleo.kora.core.query.Functions;
 import com.nicleo.kora.core.query.NamedSqlExpression;
+import com.nicleo.kora.core.query.Page;
+import com.nicleo.kora.core.query.Paging;
+import com.nicleo.kora.core.query.QueryWrapper;
 import com.nicleo.kora.core.query.Wrapper;
 import com.nicleo.kora.core.runtime.DbType;
 import com.nicleo.kora.core.runtime.DefaultSqlGenerator;
+import com.nicleo.kora.core.runtime.DefaultSqlPagingSupport;
 import com.nicleo.kora.core.runtime.SqlRequest;
+import com.nicleo.kora.core.runtime.SqlSession;
+import com.nicleo.kora.core.runtime.SqlSessionException;
+import com.nicleo.kora.core.runtime.TypeConverter;
+import com.nicleo.kora.core.runtime.RowMapper;
 
 class QueryWrapperTest {
     private final DefaultSqlGenerator sqlGenerator = new DefaultSqlGenerator();
@@ -469,7 +478,111 @@ class QueryWrapperTest {
         assertArrayEquals(new Object[0], request.getArgs());
     }
 
+    @Test
+    void queryWrapperShouldExecuteWithBoundSqlSession() {
+        RecordingSqlSession sqlSession = new RecordingSqlSession();
+        TestUserTable users = TestUserTable.USERS;
+
+        QueryWrapper query = Wrapper.query(sqlSession)
+                .selectAll()
+                .from(users)
+                .where(users.ID.eq(1L));
+
+        TestUser one = query.one(TestUser.class);
+        List<TestUser> list = query.list(TestUser.class);
+        long count = query.count();
+        Page<TestUser> page = query.page(Paging.of(1, 10), TestUser.class);
+
+        assertEquals(sqlSession.oneResult, one);
+        assertEquals(sqlSession.listResult, list);
+        assertEquals(3L, count);
+        assertEquals(3L, page.total());
+        assertEquals(sqlSession.listResult, page.records());
+    }
+
+    @Test
+    void queryWrapperShouldRejectExecutionWithoutSqlSession() {
+        TestUserTable users = TestUserTable.USERS;
+        QueryWrapper query = Wrapper.query()
+                .selectAll()
+                .from(users)
+                .where(users.ID.eq(1L));
+
+        assertThrows(SqlSessionException.class, () -> query.one(TestUser.class));
+        assertThrows(SqlSessionException.class, query::count);
+    }
+
     private static final class TestUser {
+    }
+
+    private static final class RecordingSqlSession implements SqlSession {
+        private final DefaultSqlGenerator sqlGenerator = new DefaultSqlGenerator();
+        private final com.nicleo.kora.core.runtime.SqlPagingSupport sqlPagingSupport = new com.nicleo.kora.core.runtime.SqlPagingSupport() {
+            @Override
+            public <T> Page<T> page(SqlSession sqlSession, com.nicleo.kora.core.runtime.SqlExecutionContext context, String sql, Object[] args, Paging paging, Class<T> elementType) {
+                return new Page<>(paging.getCurrent(), paging.getSize(), 3L, listResult.stream().map(elementType::cast).toList());
+            }
+
+            @Override
+            public long count(SqlSession sqlSession, com.nicleo.kora.core.runtime.SqlExecutionContext context, String sql, Object[] args) {
+                return 3L;
+            }
+        };
+        private final TypeConverter typeConverter = new TypeConverter();
+        private final TestUser oneResult = new TestUser();
+        private final List<TestUser> listResult = List.of(new TestUser(), new TestUser());
+
+        @Override
+        public <T> T selectOne(String sql, Object[] args, Class<T> resultType) {
+            return resultType.cast(oneResult);
+        }
+
+        @Override
+        public <T> List<T> selectList(String sql, Object[] args, Class<T> resultType) {
+            return listResult.stream().map(resultType::cast).toList();
+        }
+
+        @Override
+        public int update(String sql, Object[] args) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int[] executeBatch(String sql, List<Object[]> batchArgs) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public TypeConverter getTypeConverter() {
+            return typeConverter;
+        }
+
+        @Override
+        public void setTypeConverter(TypeConverter typeConverter) {
+        }
+
+        @Override
+        public com.nicleo.kora.core.runtime.SqlPagingSupport getSqlPagingSupport() {
+            return sqlPagingSupport;
+        }
+
+        @Override
+        public DbType getDbType() {
+            return DbType.MYSQL;
+        }
+
+        @Override
+        public com.nicleo.kora.core.runtime.SqlGenerator getSqlGenerator() {
+            return sqlGenerator;
+        }
+
+        @Override
+        public <T> List<T> executeQuery(String sql, Object[] args, RowMapper<T> rowMapper) {
+            if (sql.startsWith("select count(*)")) {
+                return List.of((T) Long.valueOf(3L));
+            }
+            throw new UnsupportedOperationException();
+        }
     }
 
     private static final class TestUserTable extends EntityTable<TestUser> {

@@ -486,6 +486,17 @@ public class KoraProcessor extends AbstractProcessor {
         return mapperTypes;
     }
 
+    private List<TypeElement> findEntityTypes(ScanSpec scanSpec, RoundEnvironment roundEnv) {
+        List<TypeElement> entityTypes = new ArrayList<>();
+        for (String qualifiedName : generatedMeta) {
+            TypeElement typeElement = elements.getTypeElement(qualifiedName);
+            if (typeElement != null && matchesPackage(typeElement, scanSpec.entityPackages)) {
+                entityTypes.add(typeElement);
+            }
+        }
+        return entityTypes;
+    }
+
     private void collectMapperTypes(Element element, List<String> mapperPackages, Set<String> mapperTypeNames) {
         if (element instanceof TypeElement typeElement) {
             if (!isGeneratedType(typeElement)
@@ -517,7 +528,7 @@ public class KoraProcessor extends AbstractProcessor {
     private void generateSupportsAndMappers(RoundEnvironment roundEnv) {
         for (ScanSpec scanSpec : scanSpecs) {
             try {
-                writeSupportClass(scanSpec);
+                writeSupportClass(scanSpec, findEntityTypes(scanSpec, roundEnv));
                 Map<String, MapperXmlDefinition> xmlDefinitions = loadMapperXmlDefinitions(scanSpec);
                 for (MapperXmlDefinition xmlDefinition : xmlDefinitions.values()) {
                     TypeElement mapperType = elements.getTypeElement(xmlDefinition.getNamespace());
@@ -569,12 +580,12 @@ public class KoraProcessor extends AbstractProcessor {
         sourceWriter.write(qualifiedName, entityType, buildReflectorSource(packageName, generatedSimpleName, entityType));
     }
 
-    private void writeSupportClass(ScanSpec scanSpec) throws IOException {
+    private void writeSupportClass(ScanSpec scanSpec, List<TypeElement> entityTypes) throws IOException {
         String qualifiedName = supportClassName(scanSpec);
         if (!generatedSupports.add(qualifiedName)) {
             return;
         }
-        sourceWriter.write(qualifiedName, scanSpec.configType, buildSupportSource(scanSpec));
+        sourceWriter.write(qualifiedName, scanSpec.configType, buildSupportSource(scanSpec, entityTypes));
     }
 
     private void writeMapperImpl(TypeElement mapperType, MapperXmlDefinition xmlDefinition, String supportClassName) throws IOException {
@@ -1034,8 +1045,8 @@ public class KoraProcessor extends AbstractProcessor {
         return String.valueOf(raw);
     }
 
-    private String buildSupportSource(ScanSpec scanSpec) {
-        return mapperSourceGenerator.buildSupportSource(scanSpec, new ArrayList<>(reflectSpecs.values()));
+    private String buildSupportSource(ScanSpec scanSpec, List<TypeElement> entityTypes) {
+        return mapperSourceGenerator.buildSupportSource(scanSpec, new ArrayList<>(reflectSpecs.values()), entityTypes);
     }
 
     private String buildMapperSource(String packageName, String generatedSimpleName, TypeElement mapperType, MapperXmlDefinition xmlDefinition, String supportClassName) {

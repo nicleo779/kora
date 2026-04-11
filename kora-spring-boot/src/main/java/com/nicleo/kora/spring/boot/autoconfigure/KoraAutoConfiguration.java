@@ -4,15 +4,23 @@ import java.util.List;
 
 import javax.sql.DataSource;
 
-import com.nicleo.kora.core.runtime.*;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.context.annotation.Scope;
 import org.springframework.context.annotation.Bean;
-import org.springframework.beans.factory.config.ConfigurableBeanFactory;
+import org.springframework.context.annotation.Scope;
 
+import com.nicleo.kora.core.runtime.DefaultSqlGenerator;
+import com.nicleo.kora.core.runtime.DefaultSqlPagingSupport;
+import com.nicleo.kora.core.runtime.SqlGenerator;
+import com.nicleo.kora.core.runtime.SqlInterceptor;
+import com.nicleo.kora.core.runtime.SqlPagingSupport;
+import com.nicleo.kora.core.runtime.SqlSession;
+import com.nicleo.kora.core.runtime.SqlSessionFactory;
+import com.nicleo.kora.core.runtime.TypeConverter;
+import com.nicleo.kora.spring.boot.CurrentSqlSessionProvider;
 import com.nicleo.kora.spring.boot.SpringTransactionSqlSession;
 import com.nicleo.kora.spring.boot.Sql;
 
@@ -31,10 +39,22 @@ public class KoraAutoConfiguration {
         return new DefaultSqlGenerator();
     }
 
+    @Bean(destroyMethod = "close")
+    @ConditionalOnMissingBean
+    public SqlBinding sqlBinding(CurrentSqlSessionProvider currentSqlSessionProvider) {
+        Sql.bind(currentSqlSessionProvider);
+        return new SqlBinding();
+    }
+
     @Bean
     @ConditionalOnMissingBean
-    public DbType dbType() {
-        return DbType.MYSQL;
+    public CurrentSqlSessionProvider currentSqlSessionProvider(ObjectProvider<SqlSession> sqlSessionProvider, SqlSessionFactory sqlSessionFactory) {
+        return () -> {
+            SqlSession current = sqlSessionProvider.getIfAvailable();
+            return current != null
+                    ? new CurrentSqlSessionProvider.SessionHandle(current, false)
+                    : new CurrentSqlSessionProvider.SessionHandle(sqlSessionFactory.openSession(), true);
+        };
     }
 
     @Bean
@@ -56,13 +76,6 @@ public class KoraAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public SqlBinder sqlBinder(SqlSessionFactory sqlSessionFactory) {
-        Sql.bind(sqlSessionFactory);
-        return new SqlBinder();
-    }
-
-    @Bean
-    @ConditionalOnMissingBean
     public static KoraMapperBeanDefinitionRegistryPostProcessor koraMapperBeanDefinitionRegistryPostProcessor() {
         return new KoraMapperBeanDefinitionRegistryPostProcessor();
     }
@@ -74,6 +87,10 @@ public class KoraAutoConfiguration {
         return sqlSessionFactory.openSession();
     }
 
-    public static final class SqlBinder {
+    public static final class SqlBinding implements AutoCloseable {
+        @Override
+        public void close() {
+            Sql.clear();
+        }
     }
 }

@@ -15,13 +15,19 @@ final class MapperSourceGenerator {
         this.context = context;
     }
 
-    String buildSupportSource(KoraProcessor.ScanSpec scanSpec, List<KoraProcessor.ReflectSpec> reflectSpecs) {
+    String buildSupportSource(KoraProcessor.ScanSpec scanSpec,
+                              List<KoraProcessor.ReflectSpec> reflectSpecs,
+                              List<TypeElement> entityTypes) {
         String packageName = context.packageNameOf(scanSpec.configType());
         String simpleName = context.supportSimpleName(scanSpec);
         String packageBlock = packageName.isEmpty() ? "" : "package %s;%n%n".formatted(packageName);
         String registrations = reflectSpecs.stream()
                 .map(spec -> "            com.nicleo.kora.core.runtime.GeneratedReflectors.register(%s.class, new %s%s());%n"
                         .formatted(spec.typeElement().getQualifiedName(), spec.typeElement().getQualifiedName(), spec.suffix()))
+                .collect(Collectors.joining());
+        String tableRegistrations = entityTypes.stream()
+                .map(entityType -> "            com.nicleo.kora.core.query.Tables.register(%s.class, %s);%n"
+                        .formatted(entityType.getQualifiedName(), context.tableConstantReference(entityType)))
                 .collect(Collectors.joining());
         return """
                 %spublic final class %s {
@@ -38,11 +44,11 @@ final class MapperSourceGenerator {
                             if (installed) {
                                 return;
                             }
-                %s            installed = true;
+                %s%s            installed = true;
                         }
                     }
                 }
-                """.formatted(packageBlock, simpleName, simpleName, simpleName, registrations);
+                """.formatted(packageBlock, simpleName, simpleName, simpleName, registrations, tableRegistrations);
     }
 
     String buildMapperSource(String packageName,

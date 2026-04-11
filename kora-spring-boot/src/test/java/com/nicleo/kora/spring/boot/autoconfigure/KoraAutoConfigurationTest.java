@@ -11,12 +11,14 @@ import com.nicleo.kora.core.runtime.SqlSessionFactory;
 import com.nicleo.kora.core.query.Page;
 import com.nicleo.kora.core.query.Paging;
 import com.nicleo.kora.core.query.QueryWrapper;
+import com.nicleo.kora.core.query.Tables;
 import com.nicleo.kora.core.query.Wrapper;
 import com.nicleo.kora.core.annotation.KoraScan;
 import com.nicleo.kora.spring.boot.autoconfigure.collision.CollisionMapperKoraConfig;
 import com.nicleo.kora.spring.boot.autoconfigure.mapper.TestUser;
 import com.nicleo.kora.spring.boot.autoconfigure.mapper.TestMapperKoraConfig;
 import com.nicleo.kora.spring.boot.autoconfigure.mapper.TestUserMapper;
+import com.nicleo.kora.spring.boot.CurrentSqlSessionProvider;
 import com.nicleo.kora.spring.boot.SpringTransactionSqlSession;
 import com.nicleo.kora.spring.boot.Sql;
 import org.junit.jupiter.api.Test;
@@ -35,6 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class KoraAutoConfigurationTest {
@@ -117,7 +120,7 @@ class KoraAutoConfigurationTest {
     }
 
     @Test
-    void shouldSupportStaticSqlExecutor() {
+    void shouldSupportStaticSqlQueryDslWithRegisteredTableLookup() {
         contextRunner
                 .withUserConfiguration(DataSourceConfig.class)
                 .run(context -> {
@@ -147,20 +150,164 @@ class KoraAutoConfigurationTest {
                             .orderBy(order -> order.asc(TxRowTable.TX_DEMO.id))
                             .limit(1);
 
-                    TxRow one = Sql.of(oneQuery).one(TxRow.class);
-                    assertEquals(1L, one.getId());
-
-                    QueryWrapper pageQuery = Wrapper.<TxRow>query()
+                    TxRow one = Sql.query()
                             .selectAll()
                             .from(TxRowTable.TX_DEMO)
-                            .orderBy(order -> order.asc(TxRowTable.TX_DEMO.id));
+                            .orderBy(order -> order.asc(TxRowTable.TX_DEMO.id))
+                            .limit(1)
+                            .one(TxRow.class);
+                    assertEquals(1L, one.getId());
+                    one = Sql.select(TxRowTable.TX_DEMO, TxRowTable.TX_DEMO.id.eq(1));
+                    assertEquals(1, one.getId());
                     Paging paging = new Paging();
                     paging.setCurrent(1);
                     paging.setSize(1);
-                    Page<TxRow> page = Sql.of(pageQuery).page(paging, TxRow.class);
+                    Page<TxRow> page = Sql.query()
+                            .selectAll()
+                            .from(TxRowTable.TX_DEMO)
+                            .orderBy(order -> order.asc(TxRowTable.TX_DEMO.id))
+                            .page(paging, TxRow.class);
                     assertEquals(1, page.current());
                     assertEquals(2L, page.total());
                     assertEquals(1, page.records().size());
+                });
+    }
+
+    @Test
+    void shouldSupportStaticSqlFromShortcut() {
+        contextRunner
+                .withUserConfiguration(DataSourceConfig.class)
+                .run(context -> {
+                    GeneratedReflectors.clear();
+                    GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
+                        @Override
+                        @SuppressWarnings("unchecked")
+                        public <T> GeneratedReflector<T> get(Class<T> type) {
+                            if (type == TxRow.class) {
+                                return (GeneratedReflector<T>) new TxRowReflector();
+                            }
+                            throw new IllegalArgumentException(type.getName());
+                        }
+                    });
+
+                    DataSource dataSource = context.getBean(DataSource.class);
+                    try (var connection = dataSource.getConnection();
+                         var statement = connection.createStatement()) {
+                        statement.execute("drop table if exists tx_demo");
+                        statement.execute("create table tx_demo(id bigint primary key, name varchar(32))");
+                        statement.execute("insert into tx_demo(id, name) values (1, 'a'), (2, 'b')");
+                    }
+
+                    TxRow one = Sql.from(TxRowTable.TX_DEMO)
+                            .orderBy(order -> order.asc(TxRowTable.TX_DEMO.id))
+                            .limit(1)
+                            .one(TxRow.class);
+
+                    assertEquals(1L, one.getId());
+                });
+    }
+
+    @Test
+    void shouldSupportStaticSqlQueryDsl() {
+        contextRunner
+                .withUserConfiguration(DataSourceConfig.class)
+                .run(context -> {
+                    GeneratedReflectors.clear();
+                    GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
+                        @Override
+                        @SuppressWarnings("unchecked")
+                        public <T> GeneratedReflector<T> get(Class<T> type) {
+                            if (type == TxRow.class) {
+                                return (GeneratedReflector<T>) new TxRowReflector();
+                            }
+                            throw new IllegalArgumentException(type.getName());
+                        }
+                    });
+                    Tables.register(TxRow.class, TxRowTable.TX_DEMO);
+
+                    DataSource dataSource = context.getBean(DataSource.class);
+                    try (var connection = dataSource.getConnection();
+                         var statement = connection.createStatement()) {
+                        statement.execute("drop table if exists tx_demo");
+                        statement.execute("create table tx_demo(id bigint primary key, name varchar(32))");
+                        statement.execute("insert into tx_demo(id, name) values (1, 'a'), (2, 'b')");
+                    }
+
+                    TxRow one = Sql.query()
+                            .selectAll()
+                            .from(TxRowTable.TX_DEMO)
+                            .orderBy(order -> order.asc(TxRowTable.TX_DEMO.id))
+                            .limit(1)
+                            .one(TxRow.class);
+
+                    assertEquals(1L, one.getId());
+                });
+    }
+
+    @Test
+    void shouldNotCloseReusedCurrentSqlSession() {
+        var query = Wrapper.query()
+                .selectAll()
+                .from(TxRowTable.TX_DEMO)
+                .limit(1);
+
+        TrackingSqlSession sqlSession = new TrackingSqlSession();
+        Sql.bind(() -> new CurrentSqlSessionProvider.SessionHandle(sqlSession, false));
+        try {
+            assertThrows(com.nicleo.kora.core.runtime.SqlSessionException.class, () -> Sql.query().selectAll().from(TxRowTable.TX_DEMO).one(TxRow.class));
+            assertEquals(0, sqlSession.closeCount);
+        } finally {
+            Sql.clear();
+        }
+    }
+
+    @Test
+    void shouldClearStaticSqlBindingWhenContextCloses() {
+        contextRunner
+                .withUserConfiguration(DataSourceConfig.class)
+                .run(context -> {
+                    assertThrows(com.nicleo.kora.core.runtime.SqlSessionException.class, () -> {
+                        context.close();
+                        Sql.query();
+                    });
+                });
+    }
+
+    @Test
+    void shouldSupportStaticSqlCrudHelpers() {
+        contextRunner
+                .withUserConfiguration(DataSourceConfig.class)
+                .run(context -> {
+                    GeneratedReflectors.clear();
+                    GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
+                        @Override
+                        @SuppressWarnings("unchecked")
+                        public <T> GeneratedReflector<T> get(Class<T> type) {
+                            if (type == TxRow.class) {
+                                return (GeneratedReflector<T>) new TxRowReflector();
+                            }
+                            throw new IllegalArgumentException(type.getName());
+                        }
+                    });
+                    Tables.register(TxRow.class, TxRowTable.TX_DEMO);
+
+                    DataSource dataSource = context.getBean(DataSource.class);
+                    try (var connection = dataSource.getConnection();
+                         var statement = connection.createStatement()) {
+                        statement.execute("drop table if exists tx_demo");
+                        statement.execute("create table tx_demo(id bigint auto_increment primary key, name varchar(32))");
+                    }
+
+                    TxRow inserted = new TxRow();
+                    inserted.setName("demo");
+                    assertEquals(1, Sql.insert(inserted));
+
+                    TxRow update = new TxRow();
+                    update.setId(1L);
+                    update.setName("demo-updated");
+                    assertEquals(1, Sql.updateById(update));
+
+                    assertEquals(1, Sql.deleteById(TxRow.class, 1L));
                 });
     }
 
@@ -349,6 +496,49 @@ class KoraAutoConfigurationTest {
                 case "name" -> new FieldInfo("name", String.class, 0, null, new java.lang.annotation.Annotation[0]);
                 default -> null;
             };
+        }
+    }
+
+    static final class TrackingSqlSession implements SqlSession {
+        int closeCount;
+
+        @Override
+        public <T> T selectOne(String sql, Object[] args, Class<T> resultType) {
+            throw new com.nicleo.kora.core.runtime.SqlSessionException("test");
+        }
+
+        @Override
+        public <T> java.util.List<T> selectList(String sql, Object[] args, Class<T> resultType) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int update(String sql, Object[] args) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int[] executeBatch(String sql, java.util.List<Object[]> batchArgs) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public com.nicleo.kora.core.runtime.TypeConverter getTypeConverter() {
+            return new com.nicleo.kora.core.runtime.TypeConverter();
+        }
+
+        @Override
+        public void setTypeConverter(com.nicleo.kora.core.runtime.TypeConverter typeConverter) {
+        }
+
+        @Override
+        public <T> java.util.List<T> executeQuery(String sql, Object[] args, com.nicleo.kora.core.runtime.RowMapper<T> rowMapper) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void close() {
+            closeCount++;
         }
     }
 }
