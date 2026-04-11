@@ -3,7 +3,7 @@ package com.example.simple.inheritance;
 import com.nicleo.kora.core.annotation.Reflect;
 import com.nicleo.kora.core.annotation.ReflectMetadataLevel;
 
-@Reflect(metadata = ReflectMetadataLevel.ALL, annotationMetadata = true)
+@Reflect(metadata = ReflectMetadataLevel.METHOD, annotationMetadata = true)
 @TestReflectTag("base")
 public class BaseUser {
     private Long id;

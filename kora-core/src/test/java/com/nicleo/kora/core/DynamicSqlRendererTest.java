@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class DynamicSqlRendererTest {
     @BeforeAll
     static void installReflector() {
+        GeneratedReflectors.clear();
         GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
             @Override
             @SuppressWarnings("unchecked")

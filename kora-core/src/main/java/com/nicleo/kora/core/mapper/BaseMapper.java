@@ -14,11 +14,13 @@ public interface BaseMapper<T> {
 
     List<T> selectByIds(Collection<Serializable> ids);
 
-    List<T> selectList(WhereWrapper<T> query);
+    List<T> selectList(WhereWrapper query);
 
-    T selectOne(WhereWrapper<T> query);
+    T selectOne(WhereWrapper query);
 
-    Page<T> page(Paging paging, WhereWrapper<T> query);
+    long count(WhereWrapper query);
+
+    Page<T> page(Paging paging, WhereWrapper query);
 
     int insert(T entity);
 
@@ -28,9 +30,9 @@ public interface BaseMapper<T> {
 
     int updateById(Collection<T> entities);
 
-    int delete(WhereWrapper<T> query);
+    int delete(WhereWrapper query);
 
-    int update(UpdateWrapper<T> updateWrapper);
+    int update(UpdateWrapper updateWrapper);
 
     int deleteById(Serializable id);
 

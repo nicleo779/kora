@@ -10,7 +10,7 @@ import java.lang.annotation.Target;
 public @interface Reflect {
     String suffix() default "Reflector";
 
-    ReflectMetadataLevel metadata() default ReflectMetadataLevel.FIELDS;
+    ReflectMetadataLevel metadata() default ReflectMetadataLevel.BASIC;
 
     boolean annotationMetadata() default false;
 }

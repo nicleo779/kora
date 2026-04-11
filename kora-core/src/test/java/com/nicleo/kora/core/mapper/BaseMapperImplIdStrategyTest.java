@@ -27,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class BaseMapperImplIdStrategyTest {
     @BeforeEach
     void setUp() {
+        GeneratedReflectors.clear();
         GeneratedReflectors.install(new TestReflectorResolver());
     }
 
@@ -85,6 +86,19 @@ class BaseMapperImplIdStrategyTest {
         assertArrayEquals(new Object[]{5001L, "session"}, sqlSession.lastArgs);
     }
 
+    @Test
+    void noneStrategyShouldAssignGeneratedKeyBackToEntity() {
+        RecordingSqlSession sqlSession = new RecordingSqlSession();
+        sqlSession.generatedKey = 77L;
+        BaseMapperImpl<AutoIdEntity> mapper = new BaseMapperImpl<>(sqlSession, AutoIdTable.AUTO_IDS);
+        AutoIdEntity entity = new AutoIdEntity(null, "auto");
+
+        assertEquals(1, mapper.insert(entity));
+        assertEquals("insert into auto_ids (name) values (?)", sqlSession.lastSql);
+        assertArrayEquals(new Object[]{"auto"}, sqlSession.lastArgs);
+        assertEquals(77L, entity.getId());
+    }
+
     private static final class RecordingSqlSession implements SqlSession {
         private TypeConverter typeConverter = new TypeConverter();
         private IdGenerator idGenerator;
@@ -92,6 +106,7 @@ class BaseMapperImplIdStrategyTest {
         private Object[] lastArgs;
         private String lastBatchSql;
         private List<Object[]> lastBatchArgs;
+        private Object generatedKey;
 
         @Override
         public <T> T selectOne(String sql, Object[] args, Class<T> resultType) {
@@ -108,6 +123,13 @@ class BaseMapperImplIdStrategyTest {
             this.lastSql = sql;
             this.lastArgs = args;
             return 1;
+        }
+
+        @Override
+        public Object updateAndReturnGeneratedKey(String sql, Object[] args) {
+            this.lastSql = sql;
+            this.lastArgs = args;
+            return generatedKey;
         }
 
         @Override
@@ -152,6 +174,28 @@ class BaseMapperImplIdStrategyTest {
         @Override
         public <T> List<T> executeQuery(String sql, Object[] args, RowMapper<T> rowMapper) {
             throw new UnsupportedOperationException();
+        }
+    }
+
+    private static final class AutoIdEntity {
+        private Long id;
+        private String name;
+
+        private AutoIdEntity(Long id, String name) {
+            this.id = id;
+            this.name = name;
+        }
+
+        public Long getId() {
+            return id;
+        }
+
+        public void setId(Long id) {
+            this.id = id;
+        }
+
+        public String getName() {
+            return name;
         }
     }
 
@@ -369,6 +413,36 @@ class BaseMapperImplIdStrategyTest {
         }
     }
 
+    private static final class AutoIdTable extends EntityTable<AutoIdEntity> {
+        private static final AutoIdTable AUTO_IDS = new AutoIdTable();
+        private final Column<AutoIdEntity, Long> ID = column("id", Long.class);
+
+        private AutoIdTable() {
+            super(AutoIdEntity.class, "auto_ids");
+        }
+
+        @Override
+        public IdStrategy idStrategy() {
+            return IdStrategy.NONE;
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <V> Column<AutoIdEntity, V> idColumn() {
+            return (Column<AutoIdEntity, V>) ID;
+        }
+
+        @Override
+        public String fieldName(String column) {
+            return column;
+        }
+
+        @Override
+        public String columnName(String field) {
+            return field;
+        }
+    }
+
     private static final class SequenceIdGenerator implements IdGenerator {
         private final AtomicLong sequence = new AtomicLong(1000);
 
@@ -402,6 +476,9 @@ class BaseMapperImplIdStrategyTest {
             }
             if (type == SessionCustomEntity.class) {
                 return (GeneratedReflector<T>) new SessionCustomReflector();
+            }
+            if (type == AutoIdEntity.class) {
+                return (GeneratedReflector<T>) new AutoIdReflector();
             }
             throw new IllegalArgumentException(type.getName());
         }
@@ -558,6 +635,44 @@ class BaseMapperImplIdStrategyTest {
         @Override
         public FieldInfo getField(String field) {
             return null;
+        }
+    }
+
+    private static final class AutoIdReflector implements GeneratedReflector<AutoIdEntity> {
+        @Override
+        public AutoIdEntity newInstance() {
+            return new AutoIdEntity(null, null);
+        }
+
+        @Override
+        public Object invoke(AutoIdEntity target, String method, Object[] args) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void set(AutoIdEntity target, String property, Object value) {
+            if ("id".equals(property)) {
+                target.setId((Long) value);
+            }
+        }
+
+        @Override
+        public Object get(AutoIdEntity target, String property) {
+            return switch (property) {
+                case "id" -> target.getId();
+                case "name" -> target.getName();
+                default -> null;
+            };
+        }
+
+        @Override
+        public String[] getFields() {
+            return new String[]{"id", "name"};
+        }
+
+        @Override
+        public FieldInfo getField(String field) {
+            return "id".equals(field) ? new FieldInfo("id", Long.class, 2, null, new java.lang.annotation.Annotation[0]) : null;
         }
     }
 }

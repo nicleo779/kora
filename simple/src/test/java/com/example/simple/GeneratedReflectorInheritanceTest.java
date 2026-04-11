@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class GeneratedReflectorInheritanceTest {
     @BeforeAll
     static void installReflectors() {
+        GeneratedReflectors.clear();
         GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
             @Override
             @SuppressWarnings("unchecked")

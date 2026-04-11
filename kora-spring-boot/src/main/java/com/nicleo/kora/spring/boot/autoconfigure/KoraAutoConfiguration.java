@@ -62,6 +62,12 @@ public class KoraAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean
+    public static KoraMapperBeanDefinitionRegistryPostProcessor koraMapperBeanDefinitionRegistryPostProcessor() {
+        return new KoraMapperBeanDefinitionRegistryPostProcessor();
+    }
+
+    @Bean
     @ConditionalOnMissingBean(SqlSession.class)
     @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
     public SqlSession sqlSession(SqlSessionFactory sqlSessionFactory) {

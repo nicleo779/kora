@@ -9,17 +9,36 @@ import java.util.List;
 public class DefaultSqlPagingSupport implements SqlPagingSupport {
     @Override
     public <T> Page<T> page(SqlSession sqlSession, SqlExecutionContext context, String sql, Object[] args, Paging paging, Class<T> elementType) {
-        int current = paging == null || paging.getIndex() == null || paging.getIndex() < 1 ? 1 : paging.getIndex();
+        int current = paging == null || paging.getCurrent() == null || paging.getCurrent() < 1 ? 1 : paging.getCurrent();
         int size = paging == null || paging.getSize() == null || paging.getSize() < 1 ? 10 : paging.getSize();
-        long total = executeCount(sqlSession, sql, args);
+        long total = count(sqlSession, context, sql, args);
         if (total == 0L) {
             return new Page<>(current, size, 0L, List.of());
         }
         long offset = (current - 1L) * size;
-        String pageSql = sql + " LIMIT ? OFFSET ?";
-        Object[] pageArgs = appendPagingArgs(args, size, offset);
-        List<T> records = sqlSession.selectList(pageSql, pageArgs, context, elementType);
+        SqlRequest pageRequest = buildPageRequest(sqlSession, sql, args, size, offset);
+        List<T> records = sqlSession.selectList(pageRequest.getSql(), pageRequest.getArgs(), context, elementType);
         return new Page<>(current, size, total, records);
+    }
+
+    @Override
+    public long count(SqlSession sqlSession, SqlExecutionContext context, String sql, Object[] args) {
+        if (context != null && context.getCountRequest() != null) {
+            return executeCountRequest(sqlSession, context.getCountRequest());
+        }
+        return executeCount(sqlSession, sql, args);
+    }
+
+    long executeCountRequest(SqlSession sqlSession, SqlRequest countRequest) {
+        if (!(sqlSession instanceof DefaultSqlSession defaultSqlSession)) {
+            throw new SqlSessionException("Paging requires DefaultSqlSession for count query support");
+        }
+        List<Long> totals = defaultSqlSession.executeQuery(
+                countRequest.getSql(),
+                countRequest.getArgs(),
+                resultSet -> resultSet.getLong(1)
+        );
+        return totals.isEmpty() ? 0L : totals.getFirst();
     }
 
     long executeCount(SqlSession sqlSession, String sql, Object[] args) {
@@ -30,6 +49,13 @@ public class DefaultSqlPagingSupport implements SqlPagingSupport {
         Object[] countArgs = trimArgsForCount(countSql, args);
         List<Long> totals = defaultSqlSession.executeQuery(countSql, countArgs, resultSet -> resultSet.getLong(1));
         return totals.isEmpty() ? 0L : totals.getFirst();
+    }
+
+    SqlRequest buildPageRequest(SqlSession sqlSession, String sql, Object[] args, long size, long offset) {
+        if (sqlSession.getSqlGenerator() instanceof DefaultSqlGenerator defaultSqlGenerator) {
+            return defaultSqlGenerator.appendPaging(sql, args, sqlSession.getDbType(), false, Math.toIntExact(size), Math.toIntExact(offset));
+        }
+        return new SqlRequest(sql + " LIMIT ? OFFSET ?", appendPagingArgs(args, size, offset));
     }
 
     String buildCountSql(String sql) {

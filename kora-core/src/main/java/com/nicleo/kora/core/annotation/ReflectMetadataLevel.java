@@ -1,16 +1,14 @@
 package com.nicleo.kora.core.annotation;
 
 public enum ReflectMetadataLevel {
-    NONE,
-    FIELDS,
-    METHODS,
-    ALL;
+    BASIC,
+    METHOD;
 
     public boolean includesFields() {
-        return this == FIELDS || this == ALL;
+        return true;
     }
 
     public boolean includesMethods() {
-        return this == METHODS || this == ALL;
+        return this == METHOD;
     }
 }

@@ -75,7 +75,7 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
 
     private Map<String, String> buildColumnToFieldMap(GeneratedReflector<T> reflector) {
         Map<String, String> mapping = new HashMap<>();
-        for (String fieldName : reflector.getFields()) {
+        for (String fieldName : reflector.fieldNamesView()) {
             FieldInfo fieldInfo = reflector.getField(fieldName);
             if (fieldInfo == null) {
                 continue;

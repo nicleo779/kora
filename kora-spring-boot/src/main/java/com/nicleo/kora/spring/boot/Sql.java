@@ -20,18 +20,18 @@ public final class Sql {
         Sql.sqlSessionFactory = sqlSessionFactory;
     }
 
-    public static <T> SqlExecutor<T> of(QueryWrapper<T> queryWrapper) {
+    public static SqlExecutor of(QueryWrapper queryWrapper) {
         if (sqlSessionFactory == null) {
             throw new SqlSessionException("SqlSessionFactory is not bound. Did you enable kora-spring-boot auto-configuration?");
         }
-        return new SqlExecutor<>(queryWrapper, sqlSessionFactory);
+        return new SqlExecutor(queryWrapper, sqlSessionFactory);
     }
 
-    public static final class SqlExecutor<T> {
-        private final QueryWrapper<T> queryWrapper;
+    public static final class SqlExecutor {
+        private final QueryWrapper queryWrapper;
         private final SqlSessionFactory sqlSessionFactory;
 
-        private SqlExecutor(QueryWrapper<T> queryWrapper, SqlSessionFactory sqlSessionFactory) {
+        private SqlExecutor(QueryWrapper queryWrapper, SqlSessionFactory sqlSessionFactory) {
             this.queryWrapper = queryWrapper;
             this.sqlSessionFactory = sqlSessionFactory;
         }
@@ -52,15 +52,17 @@ public final class Sql {
 
         public <R> Page<R> page(Paging paging, Class<R> resultType) {
             try (SqlSession sqlSession = sqlSessionFactory.openSession()) {
-                SqlRequest request = sqlSession.getSqlGenerator().renderQuery(queryWrapper.toDefinition(), sqlSession.getDbType());
+                var definition = queryWrapper.toDefinition();
+                SqlRequest request = sqlSession.getSqlGenerator().renderQuery(definition, sqlSession.getDbType());
+                SqlRequest countRequest = sqlSession.getSqlGenerator().rewriteCount(definition, sqlSession.getDbType());
                 SqlExecutionContext context = new SqlExecutionContext(
                         sqlSession,
                         Sql.class.getName(),
                         "page",
-                        "page",
                         SqlCommandType.SELECT,
                         resultType,
                         paging,
+                        countRequest,
                         true
                 );
                 return sqlSession.getSqlPagingSupport().page(sqlSession, context, request.getSql(), request.getArgs(), paging, resultType);

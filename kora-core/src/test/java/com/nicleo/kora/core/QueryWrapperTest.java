@@ -1,19 +1,20 @@
 package com.nicleo.kora.core;
 
-import com.nicleo.kora.core.query.Column;
-import com.nicleo.kora.core.query.Conditions;
-import com.nicleo.kora.core.query.EntityTable;
-import com.nicleo.kora.core.query.Functions;
-import com.nicleo.kora.core.query.Wrapper;
-import com.nicleo.kora.core.runtime.DefaultSqlGenerator;
-import com.nicleo.kora.core.runtime.DbType;
-import com.nicleo.kora.core.runtime.SqlRequest;
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import org.junit.jupiter.api.Test;
+
+import com.nicleo.kora.core.query.Column;
+import com.nicleo.kora.core.query.Conditions;
+import com.nicleo.kora.core.query.EntityTable;
+import com.nicleo.kora.core.query.Functions;
+import com.nicleo.kora.core.query.NamedSqlExpression;
+import com.nicleo.kora.core.query.Wrapper;
+import com.nicleo.kora.core.runtime.DbType;
+import com.nicleo.kora.core.runtime.DefaultSqlGenerator;
+import com.nicleo.kora.core.runtime.SqlRequest;
 
 class QueryWrapperTest {
     private final DefaultSqlGenerator sqlGenerator = new DefaultSqlGenerator();
@@ -34,9 +35,45 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT users.* FROM users WHERE users.id = ? AND users.name IS NOT NULL AND users.id IN (?, ?, ?) AND users.age BETWEEN ? AND ?",
+                "SELECT `users`.* FROM `users` WHERE `users`.`id` = ? AND `users`.`name` IS NOT NULL AND `users`.`id` IN (?, ?, ?) AND `users`.`age` BETWEEN ? AND ?",
                 request.getSql());
         assertArrayEquals(new Object[]{1L, 1L, 2L, 3L, 18, 30}, request.getArgs());
+    }
+
+    @Test
+    void whereShouldSupportDirectConditionShortcut() {
+        TestUserTable users = TestUserTable.USERS;
+
+        SqlRequest request = sqlGenerator.renderQuery(Wrapper.query()
+                .selectAll()
+                .from(users)
+                .where(users.ID.eq(1L))
+                .toDefinition(), DbType.MYSQL);
+
+        assertEquals(
+                "SELECT `users`.* FROM `users` WHERE `users`.`id` = ?",
+                request.getSql());
+        assertArrayEquals(new Object[]{1L}, request.getArgs());
+    }
+
+    @Test
+    void whereShouldSupportMultipleConditionsAsAnd() {
+        TestUserTable users = TestUserTable.USERS;
+
+        SqlRequest request = sqlGenerator.renderQuery(Wrapper.query()
+                .selectAll()
+                .from(users)
+                .where(
+                        users.ID.eq(1L),
+                        users.AGE.ge(18),
+                        users.NAME.isNotNull()
+                )
+                .toDefinition(), DbType.MYSQL);
+
+        assertEquals(
+                "SELECT `users`.* FROM `users` WHERE (`users`.`id` = ? AND `users`.`age` >= ? AND `users`.`name` IS NOT NULL)",
+                request.getSql());
+        assertArrayEquals(new Object[]{1L, 18}, request.getArgs());
     }
 
     @Test
@@ -51,7 +88,7 @@ class QueryWrapperTest {
                         .notIn(users.AGE, List.of()))
                 .toDefinition(), DbType.MYSQL);
 
-        assertEquals("SELECT users.* FROM users WHERE 1 = 0 AND 1 = 1", request.getSql());
+        assertEquals("SELECT `users`.* FROM `users` WHERE 1 = 0 AND 1 = 1", request.getSql());
         assertArrayEquals(new Object[0], request.getArgs());
     }
 
@@ -69,7 +106,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT COUNT(*) AS total, AVG(users.age) AS avg_age, MAX(users.age) AS max_age, MIN(users.age) AS min_age FROM users",
+                "SELECT COUNT(*) AS `total`, AVG(`users`.`age`) AS `avg_age`, MAX(`users`.`age`) AS `max_age`, MIN(`users`.`age`) AS `min_age` FROM `users`",
                 request.getSql());
         assertArrayEquals(new Object[0], request.getArgs());
     }
@@ -84,7 +121,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT IF(users.age >= ?, ?, ?) AS age_group FROM users",
+                "SELECT IF(`users`.`age` >= ?, ?, ?) AS `age_group` FROM `users`",
                 mysqlRequest.getSql());
         assertArrayEquals(new Object[]{18, "adult", "minor"}, mysqlRequest.getArgs());
 
@@ -94,7 +131,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.POSTGRESQL);
 
         assertEquals(
-                "SELECT CASE WHEN users.age >= ? THEN ? ELSE ? END AS age_group FROM users",
+                "SELECT CASE WHEN \"users\".\"age\" >= ? THEN ? ELSE ? END AS \"age_group\" FROM \"users\"",
                 postgresqlRequest.getSql());
         assertArrayEquals(new Object[]{18, "adult", "minor"}, postgresqlRequest.getArgs());
     }
@@ -114,7 +151,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT IF(IF(users.age >= ?, ?, ?) = ?, ?, ?) AS adult_flag FROM users",
+                "SELECT IF(IF(`users`.`age` >= ?, ?, ?) = ?, ?, ?) AS `adult_flag` FROM `users`",
                 request.getSql());
         assertArrayEquals(new Object[]{18, "adult", "minor", "adult", 1, 0}, request.getArgs());
     }
@@ -134,9 +171,183 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT IF(users.age >= ?, ?, ?) AS age_group, COUNT(*) AS total FROM users GROUP BY IF(users.age >= ?, ?, ?) HAVING COUNT(*) >= ? ORDER BY COUNT(*) DESC",
+                "SELECT IF(`users`.`age` >= ?, ?, ?) AS `age_group`, COUNT(*) AS `total` FROM `users` GROUP BY IF(`users`.`age` >= ?, ?, ?) HAVING COUNT(*) >= ? ORDER BY COUNT(*) DESC",
                 request.getSql());
         assertArrayEquals(new Object[]{18, "adult", "minor", 18, "adult", "minor", 2}, request.getArgs());
+    }
+
+    @Test
+    void orderByShouldSupportAliasReference() {
+        TestUserTable users = TestUserTable.USERS;
+
+        SqlRequest mysqlRequest = sqlGenerator.renderQuery(Wrapper.query()
+                .select(
+                        Functions.count().as("total"),
+                        Functions.max(users.AGE).as("max_age"))
+                .from(users)
+                .orderBy(order -> order.descAlias("total").ascAlias("max_age"))
+                .toDefinition(), DbType.MYSQL);
+
+        assertEquals(
+                "SELECT COUNT(*) AS `total`, MAX(`users`.`age`) AS `max_age` FROM `users` ORDER BY `total` DESC, `max_age` ASC",
+                mysqlRequest.getSql());
+        assertArrayEquals(new Object[0], mysqlRequest.getArgs());
+
+        SqlRequest postgresqlRequest = sqlGenerator.renderQuery(Wrapper.query()
+                .select(
+                        Functions.count().as("total"),
+                        Functions.max(users.AGE).as("max_age"))
+                .from(users)
+                .orderBy(order -> order.descAlias("total").ascAlias("max_age"))
+                .toDefinition(), DbType.POSTGRESQL);
+
+        assertEquals(
+                "SELECT COUNT(*) AS \"total\", MAX(\"users\".\"age\") AS \"max_age\" FROM \"users\" ORDER BY \"total\" DESC, \"max_age\" ASC",
+                postgresqlRequest.getSql());
+        assertArrayEquals(new Object[0], postgresqlRequest.getArgs());
+    }
+
+    @Test
+    void orderByShouldAcceptNamedExpressionDirectly() {
+        TestUserTable users = TestUserTable.USERS;
+        NamedSqlExpression total = Functions.count().as("total");
+
+        SqlRequest request = sqlGenerator.renderQuery(Wrapper.query()
+                .select(total)
+                .from(users)
+                .orderBy(order -> order.desc(total))
+                .toDefinition(), DbType.MYSQL);
+
+        assertEquals(
+                "SELECT COUNT(*) AS `total` FROM `users` ORDER BY `total` DESC",
+                request.getSql());
+        assertArrayEquals(new Object[0], request.getArgs());
+    }
+
+    @Test
+    void groupByShouldSupportAliasReference() {
+        TestUserTable users = TestUserTable.USERS;
+        NamedSqlExpression ageGroup = Functions.ifElse(Conditions.ge(users.AGE, 18), "adult", "minor").as("age_group");
+
+        SqlRequest mysqlRequest = sqlGenerator.renderQuery(Wrapper.query()
+                .select(ageGroup, Functions.count().as("total"))
+                .from(users)
+                .groupBy(ageGroup)
+                .toDefinition(), DbType.MYSQL);
+
+        assertEquals(
+                "SELECT IF(`users`.`age` >= ?, ?, ?) AS `age_group`, COUNT(*) AS `total` FROM `users` GROUP BY `age_group`",
+                mysqlRequest.getSql());
+        assertArrayEquals(new Object[]{18, "adult", "minor"}, mysqlRequest.getArgs());
+
+        SqlRequest postgresqlRequest = sqlGenerator.renderQuery(Wrapper.query()
+                .select(ageGroup, Functions.count().as("total"))
+                .from(users)
+                .groupByAlias("age_group")
+                .toDefinition(), DbType.POSTGRESQL);
+
+        assertEquals(
+                "SELECT CASE WHEN \"users\".\"age\" >= ? THEN ? ELSE ? END AS \"age_group\", COUNT(*) AS \"total\" FROM \"users\" GROUP BY \"age_group\"",
+                postgresqlRequest.getSql());
+        assertArrayEquals(new Object[]{18, "adult", "minor"}, postgresqlRequest.getArgs());
+    }
+
+    @Test
+    void havingShouldSupportAliasReference() {
+        TestUserTable users = TestUserTable.USERS;
+        NamedSqlExpression total = Functions.count().as("total");
+
+        SqlRequest mysqlRequest = sqlGenerator.renderQuery(Wrapper.query()
+                .select(total)
+                .from(users)
+                .having(having -> having.geAlias("total", 2))
+                .toDefinition(), DbType.MYSQL);
+
+        assertEquals(
+                "SELECT COUNT(*) AS `total` FROM `users` HAVING `total` >= ?",
+                mysqlRequest.getSql());
+        assertArrayEquals(new Object[]{2}, mysqlRequest.getArgs());
+
+        SqlRequest postgresqlRequest = sqlGenerator.renderQuery(Wrapper.query()
+                .select(total)
+                .from(users)
+                .having(having -> having.geAlias("total", 2))
+                .toDefinition(), DbType.POSTGRESQL);
+
+        assertEquals(
+                "SELECT COUNT(*) AS \"total\" FROM \"users\" HAVING \"total\" >= ?",
+                postgresqlRequest.getSql());
+        assertArrayEquals(new Object[]{2}, postgresqlRequest.getArgs());
+    }
+
+    @Test
+    void havingShouldSupportDirectConditionShortcut() {
+        TestUserTable users = TestUserTable.USERS;
+        NamedSqlExpression total = Functions.count().as("total");
+
+        SqlRequest request = sqlGenerator.renderQuery(Wrapper.query()
+                .select(total)
+                .from(users)
+                .having(total.ge(2))
+                .toDefinition(), DbType.MYSQL);
+
+        assertEquals(
+                "SELECT COUNT(*) AS `total` FROM `users` HAVING `total` >= ?",
+                request.getSql());
+        assertArrayEquals(new Object[]{2}, request.getArgs());
+    }
+
+    @Test
+    void havingShouldSupportMultipleConditionsAsAnd() {
+        TestUserTable users = TestUserTable.USERS;
+        NamedSqlExpression total = Functions.count().as("total");
+        NamedSqlExpression maxAge = Functions.max(users.AGE).as("max_age");
+
+        SqlRequest request = sqlGenerator.renderQuery(Wrapper.query()
+                .select(total, maxAge)
+                .from(users)
+                .having(total.ge(2), maxAge.ge(18))
+                .toDefinition(), DbType.MYSQL);
+
+        assertEquals(
+                "SELECT COUNT(*) AS `total`, MAX(`users`.`age`) AS `max_age` FROM `users` HAVING (`total` >= ? AND `max_age` >= ?)",
+                request.getSql());
+        assertArrayEquals(new Object[]{2, 18}, request.getArgs());
+    }
+
+    @Test
+    void namedExpressionShouldSupportDirectComparisonAndOrdering() {
+        TestUserTable users = TestUserTable.USERS;
+        NamedSqlExpression total = Functions.count().as("total");
+
+        SqlRequest request = sqlGenerator.renderQuery(Wrapper.query()
+                .select(total)
+                .from(users)
+                .having(having -> having.condition(total.ge(2)))
+                .orderBy(order -> order.asc(total))
+                .toDefinition(), DbType.MYSQL);
+
+        assertEquals(
+                "SELECT COUNT(*) AS `total` FROM `users` HAVING `total` >= ? ORDER BY `total` ASC",
+                request.getSql());
+        assertArrayEquals(new Object[]{2}, request.getArgs());
+    }
+
+    @Test
+    void countRewriteShouldUseDialectCountRewriter() {
+        TestUserTable users = TestUserTable.USERS;
+
+        SqlRequest request = sqlGenerator.rewriteCount(Wrapper.query()
+                .selectAll()
+                .from(users)
+                .where(where -> where.ge(users.AGE, 18))
+                .orderBy(order -> order.asc(users.ID))
+                .toDefinition(), DbType.MYSQL);
+
+        assertEquals(
+                "select count(*) from (SELECT `users`.* FROM `users` WHERE `users`.`age` >= ? ORDER BY `users`.`id` ASC) _kora_count",
+                request.getSql());
+        assertArrayEquals(new Object[]{18}, request.getArgs());
     }
 
     @Test
@@ -156,7 +367,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT users.* FROM users WHERE users.id = ? OR (users.name = ? AND (users.age >= ? AND users.age < ?))",
+                "SELECT `users`.* FROM `users` WHERE `users`.`id` = ? OR (`users`.`name` = ? AND (`users`.`age` >= ? AND `users`.`age` < ?))",
                 request.getSql());
         assertArrayEquals(new Object[]{1L, "Bob", 18, 30}, request.getArgs());
     }
@@ -171,16 +382,50 @@ class QueryWrapperTest {
                 .from(users)
                 .leftJoin(alias)
                 .on(on -> on
-                        .condition(Conditions.eq(users.ID, alias.ID))
+                        .condition(users.ID.eq(alias.ID))
                         .or(or -> or
                                 .eq(alias.NAME, "Bob")
                                 .eq(alias.AGE, 30)))
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT users.* FROM users LEFT JOIN users u2 ON users.id = u2.id OR (u2.name = ? AND u2.age = ?)",
+                "SELECT `users`.* FROM `users` LEFT JOIN `users` `u2` ON `users`.`id` = `u2`.`id` OR (`u2`.`name` = ? AND `u2`.`age` = ?)",
                 request.getSql());
         assertArrayEquals(new Object[]{"Bob", 30}, request.getArgs());
+    }
+
+    @Test
+    void joinShouldSupportShortcutOnClause() {
+        TestUserTable users = TestUserTable.USERS;
+        TestUserTable alias = new TestUserTable("users", "u2");
+
+        SqlRequest request = sqlGenerator.renderQuery(Wrapper.query()
+                .selectAll()
+                .from(users)
+                .leftJoin(alias, on -> on.eq(users.ID, alias.ID))
+                .toDefinition(), DbType.MYSQL);
+
+        assertEquals(
+                "SELECT `users`.* FROM `users` LEFT JOIN `users` `u2` ON `users`.`id` = `u2`.`id`",
+                request.getSql());
+        assertArrayEquals(new Object[0], request.getArgs());
+    }
+
+    @Test
+    void tableAliasShouldBeConvenientForSelfJoin() {
+        TestUserTable users = TestUserTable.USERS;
+        TestUserTable manager = users.alias("manager");
+
+        SqlRequest request = sqlGenerator.renderQuery(Wrapper.query()
+                .select(users.NAME, manager.NAME)
+                .from(users)
+                .leftJoin(manager, on -> on.eq(users.ID, manager.ID))
+                .toDefinition(), DbType.MYSQL);
+
+        assertEquals(
+                "SELECT `users`.`name`, `manager`.`name` FROM `users` LEFT JOIN `users` `manager` ON `users`.`id` = `manager`.`id`",
+                request.getSql());
+        assertArrayEquals(new Object[0], request.getArgs());
     }
 
     @Test
@@ -198,7 +443,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT users.* FROM users WHERE users.id = ? AND (NOT (users.name = ? OR (users.age < ?)))",
+                "SELECT `users`.* FROM `users` WHERE `users`.`id` = ? AND (NOT (`users`.`name` = ? OR (`users`.`age` < ?)))",
                 request.getSql());
         assertArrayEquals(new Object[]{1L, "Bob", 18}, request.getArgs());
     }
@@ -213,13 +458,13 @@ class QueryWrapperTest {
                 .selectAll()
                 .from(users)
                 .innerJoin(innerAlias)
-                .on(Conditions.eq(users.ID, innerAlias.ID))
+                .on(users.ID.eq(innerAlias.ID))
                 .rightJoin(rightAlias)
-                .on(on -> on.condition(Conditions.eq(users.ID, rightAlias.ID)))
+                .on(on -> on.eq(users.ID, rightAlias.ID))
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT users.* FROM users INNER JOIN users u2 ON users.id = u2.id RIGHT JOIN users u3 ON users.id = u3.id",
+                "SELECT `users`.* FROM `users` INNER JOIN `users` `u2` ON `users`.`id` = `u2`.`id` RIGHT JOIN `users` `u3` ON `users`.`id` = `u3`.`id`",
                 request.getSql());
         assertArrayEquals(new Object[0], request.getArgs());
     }
@@ -236,6 +481,10 @@ class QueryWrapperTest {
 
         private TestUserTable(String tableName, String alias) {
             super(TestUser.class, tableName, alias);
+        }
+
+        private TestUserTable alias(String alias) {
+            return new TestUserTable(tableName(), alias);
         }
 
         @Override

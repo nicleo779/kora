@@ -14,7 +14,6 @@ import com.nicleo.kora.core.dynamic.TextSqlNode;
 import com.nicleo.kora.core.dynamic.TrimSqlNode;
 import com.nicleo.kora.core.dynamic.WhenSqlNode;
 import com.nicleo.kora.core.xml.MapperXmlDefinition;
-import com.nicleo.kora.core.xml.MapperXmlParser;
 import com.nicleo.kora.core.xml.SqlCommandType;
 import com.nicleo.kora.core.xml.SqlNodeDefinition;
 
@@ -45,13 +44,7 @@ import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
-import javax.tools.JavaFileObject;
 import java.io.IOException;
-import java.io.Reader;
-import java.io.Writer;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -71,19 +64,24 @@ import java.util.stream.Stream;
 @SupportedOptions("kora.projectDir")
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 public class KoraProcessor extends AbstractProcessor {
-    private static final String SQL_SESSION = "com.nicleo.kora.core.runtime.SqlSession";
+    static final String SQL_SESSION = "com.nicleo.kora.core.runtime.SqlSession";
     private static final String LIST_TYPE = "java.util.List";
     private static final String PAGE_TYPE = "com.nicleo.kora.core.query.Page";
     private static final String PAGING_TYPE = "com.nicleo.kora.core.query.Paging";
     private static final String ID_ANNOTATION = "com.nicleo.kora.core.annotation.ID";
-    private static final String ID_STRATEGY_TYPE = "com.nicleo.kora.core.annotation.IdStrategy";
-    private static final String ID_GENERATOR_TYPE = "com.nicleo.kora.core.runtime.IdGenerator";
+    static final String ID_STRATEGY_TYPE = "com.nicleo.kora.core.annotation.IdStrategy";
+    static final String ID_GENERATOR_TYPE = "com.nicleo.kora.core.runtime.IdGenerator";
 
     private Filer filer;
     private Messager messager;
     private Elements elements;
     private Types types;
     private String projectDir;
+    private MapperXmlLoader xmlLoader;
+    private GeneratedJavaSourceWriter sourceWriter;
+    private MapperSourceGenerator mapperSourceGenerator;
+    private EntityTableSourceGenerator entityTableSourceGenerator;
+    private ReflectorSourceGenerator reflectorSourceGenerator;
     private Map<String, String> activeTypeConstants = Map.of();
 
     private final Map<String, ReflectSpec> reflectSpecs = new LinkedHashMap<>();
@@ -102,6 +100,221 @@ public class KoraProcessor extends AbstractProcessor {
         this.elements = processingEnv.getElementUtils();
         this.types = processingEnv.getTypeUtils();
         this.projectDir = processingEnv.getOptions().getOrDefault("kora.projectDir", System.getProperty("user.dir", "."));
+        this.xmlLoader = new MapperXmlLoader(projectDir);
+        this.sourceWriter = new GeneratedJavaSourceWriter(filer);
+        this.mapperSourceGenerator = new MapperSourceGenerator(new MapperSourceGenerator.Context() {
+            @Override
+            public String packageNameOf(TypeElement typeElement) {
+                return KoraProcessor.this.packageNameOf(typeElement);
+            }
+
+            @Override
+            public String supportSimpleName(ScanSpec scanSpec) {
+                return KoraProcessor.this.supportSimpleName(scanSpec);
+            }
+
+            @Override
+            public String mapperEntityTypeLiteral(TypeElement mapperType) {
+                return KoraProcessor.this.mapperEntityTypeLiteral(mapperType);
+            }
+
+            @Override
+            public TypeElement mapperEntityType(TypeElement mapperType) {
+                return KoraProcessor.this.mapperEntityType(mapperType);
+            }
+
+            @Override
+            public String statementFieldName(String statementId) {
+                return KoraProcessor.this.statementFieldName(statementId);
+            }
+
+            @Override
+            public String renderSqlNode(DynamicSqlNode node) {
+                return KoraProcessor.this.renderSqlNode(node);
+            }
+
+            @Override
+            public String tableConstantReference(TypeElement entityType) {
+                return KoraProcessor.this.tableConstantReference(entityType);
+            }
+
+            @Override
+            public String renderPagingArgument(ExecutableElement method) {
+                return KoraProcessor.this.renderPagingArgument(method);
+            }
+
+            @Override
+            public String renderResultTypeLiteral(ExecutableElement method, SqlNodeDefinition statement) {
+                return KoraProcessor.this.renderResultTypeLiteral(method, statement);
+            }
+
+            @Override
+            public String renderExecution(TypeElement mapperType, ExecutableElement method, SqlNodeDefinition statement) {
+                return KoraProcessor.this.renderExecution(mapperType, method, statement);
+            }
+        });
+        this.entityTableSourceGenerator = new EntityTableSourceGenerator(new EntityTableSourceGenerator.Context() {
+            @Override
+            public String resolveTableName(TypeElement entityType) {
+                return KoraProcessor.this.resolveTableName(entityType);
+            }
+
+            @Override
+            public List<VariableElement> collectTableFields(TypeElement entityType) {
+                return KoraProcessor.this.collectTableFields(entityType);
+            }
+
+            @Override
+            public VariableElement resolveIdField(TypeElement entityType, List<VariableElement> fields) {
+                return KoraProcessor.this.resolveIdField(entityType, fields);
+            }
+
+            @Override
+            public IdGenerationSpec resolveIdGeneration(TypeElement entityType, VariableElement idField) {
+                return KoraProcessor.this.resolveIdGeneration(entityType, idField);
+            }
+
+            @Override
+            public String escapeJava(String text) {
+                return KoraProcessor.this.escapeJava(text);
+            }
+
+            @Override
+            public String renderRuntimeCastType(TypeMirror typeMirror) {
+                return KoraProcessor.this.renderRuntimeCastType(typeMirror);
+            }
+
+            @Override
+            public String resolveColumnName(VariableElement field) {
+                return KoraProcessor.this.resolveColumnName(field);
+            }
+        });
+        this.reflectorSourceGenerator = new ReflectorSourceGenerator(new ReflectorSourceGenerator.Context() {
+            @Override
+            public List<VariableElement> collectInstanceFields(TypeElement entityType) {
+                return KoraProcessor.this.collectInstanceFields(entityType);
+            }
+
+            @Override
+            public List<ExecutableElement> collectInvokableMethods(TypeElement entityType) {
+                return KoraProcessor.this.collectInvokableMethods(entityType);
+            }
+
+            @Override
+            public List<String> expandedFieldNames(TypeElement entityType) {
+                return KoraProcessor.this.expandedFieldNames(entityType);
+            }
+
+            @Override
+            public ReflectSpec reflectSpec(TypeElement entityType) {
+                return reflectSpecs.get(entityType.getQualifiedName().toString());
+            }
+
+            @Override
+            public boolean hasReflectSpec(TypeElement typeElement) {
+                return reflectSpecs.containsKey(typeElement.getQualifiedName().toString());
+            }
+
+            @Override
+            public TypeElement directSuperType(TypeElement entityType) {
+                return KoraProcessor.this.directSuperType(entityType);
+            }
+
+            @Override
+            public boolean isJavaLangObject(TypeElement typeElement) {
+                return KoraProcessor.this.isJavaLangObject(typeElement);
+            }
+
+            @Override
+            public void collectTypeConstants(Map<String, String> typeConstants, TypeMirror typeMirror) {
+                KoraProcessor.this.collectTypeConstants(typeConstants, typeMirror);
+            }
+
+            @Override
+            public void setActiveTypeConstants(Map<String, String> typeConstants) {
+                activeTypeConstants = typeConstants;
+            }
+
+            @Override
+            public String escapeJava(String text) {
+                return KoraProcessor.this.escapeJava(text);
+            }
+
+            @Override
+            public String buildFieldInfoEntry(TypeElement entityType, VariableElement field, boolean includeAnnotationMetadata) {
+                return KoraProcessor.this.buildFieldInfoEntry(entityType, field, includeAnnotationMetadata);
+            }
+
+            @Override
+            public String buildMethodInfoEntry(TypeElement entityType, ExecutableElement method, boolean includeAnnotationMetadata) {
+                return KoraProcessor.this.buildMethodInfoEntry(entityType, method, includeAnnotationMetadata);
+            }
+
+            @Override
+            public String renderNullableTypeLiteral(TypeMirror typeMirror) {
+                return KoraProcessor.this.renderNullableTypeLiteral(typeMirror);
+            }
+
+            @Override
+            public int modifierMask(Set<Modifier> modifiers) {
+                return KoraProcessor.this.modifierMask(modifiers);
+            }
+
+            @Override
+            public String renderAnnotationArray(List<? extends AnnotationMirror> annotations, boolean includeAnnotationMetadata) {
+                return KoraProcessor.this.renderAnnotationArray(annotations, includeAnnotationMetadata);
+            }
+
+            @Override
+            public String renderNewInstanceExpression(TypeElement typeElement) {
+                return KoraProcessor.this.renderNewInstanceExpression(typeElement);
+            }
+
+            @Override
+            public String buildInvokeCase(ExecutableElement method) {
+                return KoraProcessor.this.buildInvokeCase(method);
+            }
+
+            @Override
+            public String buildSetCase(TypeElement entityType, VariableElement field) {
+                return KoraProcessor.this.buildSetCase(entityType, field);
+            }
+
+            @Override
+            public String buildGetCase(TypeElement entityType, VariableElement field) {
+                return KoraProcessor.this.buildGetCase(entityType, field);
+            }
+
+            @Override
+            public String buildFieldPresenceSwitch(List<VariableElement> fields, String indent, String defaultExpression) {
+                return KoraProcessor.this.buildFieldPresenceSwitch(fields, indent, defaultExpression);
+            }
+
+            @Override
+            public String buildFieldInfoSwitch(List<VariableElement> fields, String indent, String defaultExpression, boolean useLazyMetadata) {
+                return KoraProcessor.this.buildFieldInfoSwitch(fields, indent, defaultExpression, useLazyMetadata);
+            }
+
+            @Override
+            public String buildExpandedFieldPresenceSwitch(TypeElement entityType, List<String> fieldNames, String indent, String defaultExpression) {
+                return KoraProcessor.this.buildExpandedFieldPresenceSwitch(entityType, fieldNames, indent, defaultExpression);
+            }
+
+            @Override
+            public String buildExpandedFieldInfoSwitch(TypeElement entityType, List<VariableElement> localFields, List<String> fieldNames, String indent, String defaultExpression, boolean useLazyMetadata) {
+                return KoraProcessor.this.buildExpandedFieldInfoSwitch(entityType, localFields, fieldNames, indent, defaultExpression, useLazyMetadata);
+            }
+
+            @Override
+            public String buildMethodPresenceSwitch(Map<String, List<ExecutableElement>> methodsByName, String indent, String defaultExpression) {
+                return KoraProcessor.this.buildMethodPresenceSwitch(methodsByName, indent, defaultExpression);
+            }
+
+            @Override
+            public String buildMethodInfoArraySwitch(Map<String, List<ExecutableElement>> methodsByName, String indent, String defaultExpression, boolean useLazyMetadata, boolean mergeInheritedMethods) {
+                return KoraProcessor.this.buildMethodInfoArraySwitch(methodsByName, indent, defaultExpression, useLazyMetadata, mergeInheritedMethods);
+            }
+        });
     }
 
     @Override
@@ -338,80 +551,22 @@ public class KoraProcessor extends AbstractProcessor {
         }
     }
 
-    private MapperXmlDefinition parseXml(Path xmlFile) {
-        try (Reader reader = Files.newBufferedReader(xmlFile)) {
-            return MapperXmlParser.parse(reader);
-        } catch (IOException ex) {
-            throw new ProcessorException("Failed to read xml: " + xmlFile, ex);
-        }
-    }
-
     private Map<String, MapperXmlDefinition> loadMapperXmlDefinitions(ScanSpec scanSpec) throws IOException {
-        Map<String, MapperXmlDefinition> xmlDefinitions = new LinkedHashMap<>();
-        for (Path xmlFile : findXmlFiles(scanSpec.xmlRoots)) {
-            MapperXmlDefinition xmlDefinition = parseXml(xmlFile);
-            xmlDefinitions.put(xmlDefinition.getNamespace(), xmlDefinition);
-        }
-        return xmlDefinitions;
-    }
-
-    private List<Path> findXmlFiles(List<String> xmlRoots) throws IOException {
-        Set<Path> files = new LinkedHashSet<>();
-        for (String xmlRoot : xmlRoots) {
-            for (Path root : candidatePaths(xmlRoot)) {
-                if (!Files.exists(root)) {
-                    continue;
-                }
-                if (Files.isRegularFile(root) && root.toString().endsWith(".xml")) {
-                    files.add(root);
-                    continue;
-                }
-                try (Stream<Path> stream = Files.walk(root)) {
-                    files.addAll(stream.filter(Files::isRegularFile)
-                            .filter(path -> path.toString().endsWith(".xml"))
-                            .collect(Collectors.toList()));
-                }
-            }
-        }
-        return new ArrayList<>(files);
-    }
-
-    private List<Path> candidatePaths(String relativePath) {
-        String normalized = relativePath.replace('\\', '/');
-        if (normalized.startsWith("/")) {
-            normalized = normalized.substring(1);
-        }
-        Path direct = Paths.get(normalized);
-        String userDir = projectDir;
-        List<Path> paths = new ArrayList<>();
-        if (direct.isAbsolute()) {
-            paths.add(direct);
-            return paths;
-        }
-        paths.add(Paths.get(userDir, normalized));
-        paths.add(Paths.get(userDir, "src/main/resources", normalized));
-        paths.add(Paths.get(userDir, "src/test/resources", normalized));
-        return paths;
+        return xmlLoader.load(scanSpec.xmlRoots);
     }
 
     private void writeMetaClass(TypeElement entityType) throws IOException {
         String packageName = queryPackageNameOf(entityType);
         String generatedSimpleName = entityType.getSimpleName() + "Table";
         String qualifiedName = packageName.isEmpty() ? generatedSimpleName : packageName + "." + generatedSimpleName;
-        JavaFileObject fileObject = filer.createSourceFile(qualifiedName, entityType);
-        try (Writer writer = fileObject.openWriter()) {
-            writer.write(buildMetaSource(packageName, generatedSimpleName, entityType));
-        }
+        sourceWriter.write(qualifiedName, entityType, buildMetaSource(packageName, generatedSimpleName, entityType));
     }
 
     private void writeReflectorClass(TypeElement entityType, String suffix) throws IOException {
         String packageName = packageNameOf(entityType);
         String generatedSimpleName = entityType.getSimpleName() + suffix;
         String qualifiedName = packageName.isEmpty() ? generatedSimpleName : packageName + "." + generatedSimpleName;
-        JavaFileObject fileObject = filer.createSourceFile(qualifiedName, entityType);
-        try (Writer writer = fileObject.openWriter()) {
-            writer.write(buildReflectorSource(packageName, generatedSimpleName, entityType));
-        }
+        sourceWriter.write(qualifiedName, entityType, buildReflectorSource(packageName, generatedSimpleName, entityType));
     }
 
     private void writeSupportClass(ScanSpec scanSpec) throws IOException {
@@ -419,504 +574,22 @@ public class KoraProcessor extends AbstractProcessor {
         if (!generatedSupports.add(qualifiedName)) {
             return;
         }
-        JavaFileObject fileObject = filer.createSourceFile(qualifiedName, scanSpec.configType);
-        try (Writer writer = fileObject.openWriter()) {
-            writer.write(buildSupportSource(scanSpec));
-        }
+        sourceWriter.write(qualifiedName, scanSpec.configType, buildSupportSource(scanSpec));
     }
 
     private void writeMapperImpl(TypeElement mapperType, MapperXmlDefinition xmlDefinition, String supportClassName) throws IOException {
         String packageName = packageNameOf(mapperType);
         String generatedSimpleName = mapperType.getSimpleName() + "Impl";
         String qualifiedName = packageName.isEmpty() ? generatedSimpleName : packageName + "." + generatedSimpleName;
-        JavaFileObject sourceFile = filer.createSourceFile(qualifiedName, mapperType);
-        try (Writer writer = sourceFile.openWriter()) {
-            writer.write(buildMapperSource(packageName, generatedSimpleName, mapperType, xmlDefinition, supportClassName));
-        }
+        sourceWriter.write(qualifiedName, mapperType, buildMapperSource(packageName, generatedSimpleName, mapperType, xmlDefinition, supportClassName));
     }
 
     private String buildMetaSource(String packageName, String generatedSimpleName, TypeElement entityType) {
-        String entityTypeName = entityType.getQualifiedName().toString();
-        String tableName = resolveTableName(entityType);
-        String tableConstantName = constantName(tableName);
-        List<VariableElement> tableFields = collectTableFields(entityType);
-        VariableElement idField = resolveIdField(entityType, tableFields);
-        IdGenerationSpec idGeneration = resolveIdGeneration(entityType, idField);
-        StringBuilder source = new StringBuilder();
-        if (!packageName.isEmpty()) {
-            source.append("package ").append(packageName).append(";\n\n");
-        }
-        source.append("import com.nicleo.kora.core.query.Column;\n");
-        source.append("import com.nicleo.kora.core.query.EntityTable;\n\n");
-        source.append("public final class ").append(generatedSimpleName)
-                .append(" extends EntityTable<").append(entityTypeName).append("> {\n");
-        source.append("    public static final ").append(generatedSimpleName).append(' ')
-                .append(tableConstantName).append(" = new ").append(generatedSimpleName)
-                .append("(\"").append(escapeJava(tableName)).append("\", null);\n\n");
-        if (idGeneration.generatorInstantiation() != null) {
-            source.append("    private static final ").append(ID_GENERATOR_TYPE).append(" ID_GENERATOR = ")
-                    .append(idGeneration.generatorInstantiation()).append(";\n\n");
-        }
-        source.append("    public static ").append(generatedSimpleName).append(" as(String alias) {\n");
-        source.append("        return new ").append(generatedSimpleName).append("(")
-                .append(tableConstantName).append(".tableName(), alias);\n");
-        source.append("    }\n\n");
-        for (VariableElement field : tableFields) {
-            String fieldName = field.getSimpleName().toString();
-            source.append("    public final Column<").append(entityTypeName).append(", ")
-                    .append(renderRuntimeCastType(field.asType())).append("> ")
-                    .append(fieldName).append(" = column(\"")
-                    .append(escapeJava(resolveColumnName(field))).append("\", ")
-                    .append(renderRuntimeCastType(field.asType())).append(".class);\n");
-        }
-        source.append("\n    @Override\n");
-        source.append("    @SuppressWarnings(\"unchecked\")\n");
-        source.append("    public <V> Column<").append(entityTypeName).append(", V> idColumn() {\n");
-        if (idField != null) {
-            source.append("        return (Column<").append(entityTypeName).append(", V>) ")
-                    .append(idField.getSimpleName().toString()).append(";\n");
-        } else {
-            source.append("        throw new IllegalStateException(\"No id field configured for table: \" + tableName());\n");
-        }
-        source.append("    }\n\n");
-        source.append("    @Override\n");
-        source.append("    public ").append(ID_STRATEGY_TYPE).append(" idStrategy() {\n");
-        source.append("        return ").append(ID_STRATEGY_TYPE).append('.').append(idGeneration.strategy()).append(";\n");
-        source.append("    }\n\n");
-        source.append("    @Override\n");
-        source.append("    public ").append(ID_GENERATOR_TYPE).append(" idGenerator() {\n");
-        source.append("        return ").append(idGeneration.generatorInstantiation() == null ? "null" : "ID_GENERATOR").append(";\n");
-        source.append("    }\n\n");
-        source.append("    @Override\n");
-        source.append("    public String fieldName(String column) {\n");
-        source.append("        return switch (column) {\n");
-        for (VariableElement field : tableFields) {
-            source.append("            case \"").append(escapeJava(resolveColumnName(field))).append("\" -> \"")
-                    .append(field.getSimpleName()).append("\";\n");
-        }
-        source.append("            default -> column;\n");
-        source.append("        };\n");
-        source.append("    }\n\n");
-        source.append("    @Override\n");
-        source.append("    public String columnName(String field) {\n");
-        source.append("        return switch (field) {\n");
-        for (VariableElement field : tableFields) {
-            source.append("            case \"").append(field.getSimpleName()).append("\" -> \"")
-                    .append(escapeJava(resolveColumnName(field))).append("\";\n");
-        }
-        source.append("            default -> field;\n");
-        source.append("        };\n");
-        source.append("    }\n");
-        source.append("\n    private ").append(generatedSimpleName).append("(String tableName, String alias) {\n");
-        source.append("        super(").append(entityTypeName).append(".class, tableName, alias);\n");
-        source.append("    }\n");
-        source.append("}\n");
-        return source.toString();
+        return entityTableSourceGenerator.buildMetaSource(packageName, generatedSimpleName, entityType);
     }
 
     private String buildReflectorSource(String packageName, String generatedSimpleName, TypeElement entityType) {
-        String entityTypeName = entityType.getQualifiedName().toString();
-        List<VariableElement> fields = collectInstanceFields(entityType);
-        List<ExecutableElement> methods = collectInvokableMethods(entityType);
-        ReflectSpec reflectSpec = reflectSpecs.get(entityType.getQualifiedName().toString());
-        ReflectMetadataLevel metadataLevel = reflectSpec == null ? ReflectMetadataLevel.FIELDS : reflectSpec.metadataLevel;
-        boolean includeFieldsMetadata = metadataLevel.includesFields();
-        boolean includeMethodsMetadata = metadataLevel.includesMethods();
-        boolean includeAnnotationMetadata = reflectSpec != null && reflectSpec.annotationMetadata;
-        boolean useLazyMetadata = includeAnnotationMetadata;
-        Map<String, String> typeConstants = new LinkedHashMap<>();
-        TypeElement declaredSuperType = directSuperType(entityType);
-        TypeElement parentReflectType = declaredSuperType != null && !isJavaLangObject(declaredSuperType)
-                ? reflectSpecs.containsKey(declaredSuperType.getQualifiedName().toString()) ? declaredSuperType : null
-                : null;
-        String parentReflectTypeName = parentReflectType == null ? null : parentReflectType.getQualifiedName().toString();
-        Map<String, List<ExecutableElement>> methodsByName = new LinkedHashMap<>();
-        for (ExecutableElement method : methods) {
-            methodsByName.computeIfAbsent(method.getSimpleName().toString(), ignored -> new ArrayList<>()).add(method);
-        }
-        StringBuilder source = new StringBuilder();
-        if (!packageName.isEmpty()) {
-            source.append("package ").append(packageName).append(";\n\n");
-        }
-        source.append("import com.nicleo.kora.core.runtime.ClassInfo;\n");
-        source.append("import com.nicleo.kora.core.runtime.FieldInfo;\n");
-        source.append("import com.nicleo.kora.core.runtime.GeneratedReflector;\n");
-        source.append("import com.nicleo.kora.core.runtime.GeneratedReflectors;\n");
-        source.append("import com.nicleo.kora.core.runtime.MethodInfo;\n");
-        source.append("import com.nicleo.kora.core.runtime.ParameterInfo;\n");
-        source.append("import com.nicleo.kora.core.runtime.RuntimeTypes;\n");
-        source.append("import java.lang.annotation.Annotation;\n");
-        source.append("import java.lang.reflect.Type;\n");
-        source.append("import java.util.concurrent.atomic.AtomicReferenceArray;\n");
-        source.append("import java.util.Collections;\n");
-        source.append("import java.util.LinkedHashSet;\n\n");
-        source.append("public final class ").append(generatedSimpleName)
-                .append(" implements GeneratedReflector<")
-                .append(entityTypeName).append("> {\n");
-        source.append("    private static final Annotation[] NO_ANNOTATIONS = new Annotation[0];\n");
-        source.append("    private static final ParameterInfo[] NO_PARAMS = new ParameterInfo[0];\n");
-        source.append("    private static final MethodInfo[] NO_METHODS = new MethodInfo[0];\n");
-        source.append("    private static volatile ClassInfo classInfo;\n");
-        if (parentReflectType != null) {
-            source.append("    private static volatile GeneratedReflector<")
-                    .append(parentReflectTypeName).append("> parentReflector;\n");
-        }
-        if (includeFieldsMetadata || includeMethodsMetadata || parentReflectType != null) {
-            source.append('\n');
-        }
-        collectTypeConstants(typeConstants, entityType.getSuperclass());
-        for (VariableElement field : fields) {
-            collectTypeConstants(typeConstants, field.asType());
-        }
-        for (ExecutableElement method : methods) {
-            collectTypeConstants(typeConstants, method.getReturnType());
-            for (VariableElement parameter : method.getParameters()) {
-                collectTypeConstants(typeConstants, parameter.asType());
-            }
-        }
-        int typeIndex = 0;
-        for (String initializer : typeConstants.keySet()) {
-            source.append("    private static final Type TYPE_").append(typeIndex).append(" = ").append(initializer).append(";\n");
-            typeConstants.put(initializer, "TYPE_" + typeIndex);
-            typeIndex++;
-        }
-        this.activeTypeConstants = Map.copyOf(typeConstants);
-        if (!typeConstants.isEmpty()) {
-            source.append('\n');
-        }
-        if (includeFieldsMetadata) {
-            source.append("    private static final String[] FIELD_NAMES = new String[]{");
-            for (int i = 0; i < fields.size(); i++) {
-                if (i > 0) {
-                    source.append(", ");
-                }
-                source.append('"').append(escapeJava(fields.get(i).getSimpleName().toString())).append('"');
-            }
-            source.append("};\n");
-            if (useLazyMetadata) {
-                source.append("    private static final AtomicReferenceArray<FieldInfo> FIELD_CACHE = new AtomicReferenceArray<>(")
-                        .append(fields.size()).append(");\n");
-            } else {
-                source.append("    private static final FieldInfo[] FIELDS = new FieldInfo[]{\n");
-                for (int i = 0; i < fields.size(); i++) {
-                    source.append(buildFieldInfoEntry(entityType, fields.get(i), false));
-                    source.append(i + 1 == fields.size() ? '\n' : ",\n");
-                }
-                source.append("    };\n");
-            }
-            source.append('\n');
-        }
-        if (includeMethodsMetadata) {
-            source.append("    private static final String[] METHOD_NAMES = new String[]{");
-            int methodNameIndex = 0;
-            for (String methodName : methodsByName.keySet()) {
-                if (methodNameIndex++ > 0) {
-                    source.append(", ");
-                }
-                source.append('"').append(escapeJava(methodName)).append('"');
-            }
-            source.append("};\n");
-            if (useLazyMetadata) {
-                source.append("    private static final AtomicReferenceArray<MethodInfo[]> METHOD_CACHE = new AtomicReferenceArray<>(")
-                        .append(methodsByName.size()).append(");\n");
-            } else {
-                source.append("    private static final MethodInfo[][] METHODS = new MethodInfo[][]{\n");
-                int methodGroupIndex = 0;
-                for (Map.Entry<String, List<ExecutableElement>> entry : methodsByName.entrySet()) {
-                    List<ExecutableElement> groupedMethods = entry.getValue();
-                    source.append("        ");
-                    if (groupedMethods.size() == 1) {
-                        source.append("methodArray(").append(buildMethodInfoEntry(entityType, groupedMethods.getFirst(), false).trim()).append(")");
-                    } else {
-                        source.append("new MethodInfo[]{\n");
-                        for (int i = 0; i < groupedMethods.size(); i++) {
-                            source.append(buildMethodInfoEntry(entityType, groupedMethods.get(i), false));
-                            source.append(i + 1 == groupedMethods.size() ? '\n' : ",\n");
-                        }
-                        source.append("        }");
-                    }
-                    source.append(++methodGroupIndex == methodsByName.size() ? '\n' : ",\n");
-                }
-                source.append("    };\n");
-            }
-            source.append('\n');
-        }
-        if (includeFieldsMetadata && useLazyMetadata) {
-            source.append("    private static FieldInfo initField(int index) {\n")
-                    .append("        FieldInfo local = FIELD_CACHE.get(index);\n")
-                    .append("        if (local == null) {\n")
-                    .append("            synchronized (").append(generatedSimpleName).append(".class) {\n")
-                    .append("                local = FIELD_CACHE.get(index);\n")
-                    .append("                if (local == null) {\n")
-                    .append("                    local = switch (index) {\n");
-            for (int i = 0; i < fields.size(); i++) {
-                source.append("                        case ").append(i).append(" -> ")
-                        .append(buildFieldInfoEntry(entityType, fields.get(i), includeAnnotationMetadata).trim())
-                        .append(";\n");
-            }
-            source.append("                        default -> throw new IllegalArgumentException(\"Unknown field index: \" + index);\n")
-                    .append("                    };\n")
-                    .append("                    FIELD_CACHE.set(index, local);\n")
-                    .append("                }\n")
-                    .append("            }\n")
-                    .append("        }\n")
-                    .append("        return local;\n")
-                    .append("    }\n\n");
-        }
-        if (includeMethodsMetadata && useLazyMetadata) {
-            source.append("    private static MethodInfo[] initMethods(int index) {\n")
-                    .append("        MethodInfo[] local = METHOD_CACHE.get(index);\n")
-                    .append("        if (local == null) {\n")
-                    .append("            synchronized (").append(generatedSimpleName).append(".class) {\n")
-                    .append("                local = METHOD_CACHE.get(index);\n")
-                    .append("                if (local == null) {\n")
-                    .append("                    local = switch (index) {\n");
-            int methodIndex = 0;
-            for (Map.Entry<String, List<ExecutableElement>> entry : methodsByName.entrySet()) {
-                List<ExecutableElement> groupedMethods = entry.getValue();
-                source.append("                        case ").append(methodIndex++).append(" -> ");
-                if (groupedMethods.size() == 1) {
-                    source.append("methodArray(").append(buildMethodInfoEntry(entityType, groupedMethods.getFirst(), includeAnnotationMetadata).trim()).append(");\n");
-                } else {
-                    source.append("new MethodInfo[]{\n");
-                    for (int i = 0; i < groupedMethods.size(); i++) {
-                        source.append(buildMethodInfoEntry(entityType, groupedMethods.get(i), includeAnnotationMetadata));
-                        source.append(i + 1 == groupedMethods.size() ? '\n' : ",\n");
-                    }
-                    source.append("                        };\n");
-                }
-            }
-            source.append("                        default -> throw new IllegalArgumentException(\"Unknown method index: \" + index);\n")
-                    .append("                    };\n")
-                    .append("                    METHOD_CACHE.set(index, local);\n")
-                    .append("                }\n")
-                    .append("            }\n")
-                    .append("        }\n")
-                    .append("        return local;\n")
-                    .append("    }\n\n");
-        }
-        source.append("    private static MethodInfo[] methodArray(MethodInfo methodInfo) {\n")
-                .append("        return new MethodInfo[]{methodInfo};\n")
-                .append("    }\n\n");
-        source.append("    private static ParameterInfo[] parameterArray(ParameterInfo parameterInfo) {\n")
-                .append("        return new ParameterInfo[]{parameterInfo};\n")
-                .append("    }\n\n");
-        source.append("    private static ParameterInfo parameter(String name, Type type) {\n")
-                .append("        return new ParameterInfo(name, type, NO_ANNOTATIONS);\n")
-                .append("    }\n\n");
-        source.append("    private static ClassInfo initClassInfo() {\n")
-                .append("        ClassInfo local = classInfo;\n")
-                .append("        if (local == null) {\n")
-                .append("            synchronized (").append(generatedSimpleName).append(".class) {\n")
-                .append("                local = classInfo;\n")
-                .append("                if (local == null) {\n")
-                .append("                    local = new ClassInfo(")
-                .append(entityTypeName).append(".class, ")
-                .append(renderNullableTypeLiteral(entityType.getSuperclass())).append(", ")
-                .append(modifierMask(entityType.getModifiers())).append(", ")
-                .append(renderAnnotationArray(entityType.getAnnotationMirrors(), includeAnnotationMetadata)).append(");\n")
-                .append("                    classInfo = local;\n")
-                .append("                }\n")
-                .append("            }\n")
-                .append("        }\n")
-                .append("        return local;\n")
-                .append("    }\n\n");
-        if (parentReflectType != null) {
-            source.append("    private static GeneratedReflector<").append(parentReflectTypeName).append("> parentReflector() {\n")
-                    .append("        GeneratedReflector<").append(parentReflectTypeName).append("> local = parentReflector;\n")
-                    .append("        if (local == null) {\n")
-                    .append("            synchronized (").append(generatedSimpleName).append(".class) {\n")
-                    .append("                local = parentReflector;\n")
-                    .append("                if (local == null) {\n")
-                    .append("                    local = GeneratedReflectors.get(").append(parentReflectTypeName).append(".class);\n")
-                    .append("                    parentReflector = local;\n")
-                    .append("                }\n")
-                    .append("            }\n")
-                    .append("        }\n")
-                    .append("        return local;\n")
-                    .append("    }\n\n");
-        }
-        if (parentReflectType != null && includeFieldsMetadata) {
-            source.append("    private static volatile String[] mergedFieldNames;\n");
-        }
-        if (parentReflectType != null && includeMethodsMetadata) {
-            source.append("    private static volatile String[] mergedMethodNames;\n");
-        }
-        if (parentReflectType != null && (includeFieldsMetadata || includeMethodsMetadata)) {
-            source.append('\n');
-            source.append("    private static String[] mergeNames(String[] currentNames, String[] inheritedNames) {\n")
-                    .append("        if (currentNames.length == 0) {\n")
-                    .append("            return inheritedNames.clone();\n")
-                    .append("        }\n")
-                    .append("        if (inheritedNames.length == 0) {\n")
-                    .append("            return currentNames.clone();\n")
-                    .append("        }\n")
-                    .append("        LinkedHashSet<String> names = new LinkedHashSet<>();\n")
-                    .append("        Collections.addAll(names, currentNames);\n")
-                    .append("        Collections.addAll(names, inheritedNames);\n")
-                    .append("        return names.toArray(new String[0]);\n")
-                    .append("    }\n\n");
-            if (includeMethodsMetadata) {
-                source.append("    private static MethodInfo[] mergeMethodInfoArrays(MethodInfo[] currentMethods, MethodInfo[] inheritedMethods) {\n")
-                        .append("        if (currentMethods.length == 0) {\n")
-                        .append("            return inheritedMethods;\n")
-                        .append("        }\n")
-                        .append("        if (inheritedMethods.length == 0) {\n")
-                        .append("            return currentMethods;\n")
-                        .append("        }\n")
-                        .append("        MethodInfo[] merged = new MethodInfo[currentMethods.length + inheritedMethods.length];\n")
-                        .append("        System.arraycopy(currentMethods, 0, merged, 0, currentMethods.length);\n")
-                        .append("        System.arraycopy(inheritedMethods, 0, merged, currentMethods.length, inheritedMethods.length);\n")
-                        .append("        return merged;\n")
-                        .append("    }\n\n");
-            }
-            if (includeFieldsMetadata) {
-                source.append("    private static String[] mergedFieldNames() {\n")
-                        .append("        String[] local = mergedFieldNames;\n")
-                        .append("        if (local == null) {\n")
-                        .append("            synchronized (").append(generatedSimpleName).append(".class) {\n")
-                        .append("                local = mergedFieldNames;\n")
-                        .append("                if (local == null) {\n")
-                        .append("                    local = mergeNames(FIELD_NAMES, parentReflector().getFields());\n")
-                        .append("                    mergedFieldNames = local;\n")
-                        .append("                }\n")
-                        .append("            }\n")
-                        .append("        }\n")
-                        .append("        return local.clone();\n")
-                        .append("    }\n\n");
-            }
-            if (includeMethodsMetadata) {
-                source.append("    private static String[] mergedMethodNames() {\n")
-                        .append("        String[] local = mergedMethodNames;\n")
-                        .append("        if (local == null) {\n")
-                        .append("            synchronized (").append(generatedSimpleName).append(".class) {\n")
-                        .append("                local = mergedMethodNames;\n")
-                        .append("                if (local == null) {\n")
-                        .append("                    local = mergeNames(METHOD_NAMES, parentReflector().getMethods());\n")
-                        .append("                    mergedMethodNames = local;\n")
-                        .append("                }\n")
-                        .append("            }\n")
-                        .append("        }\n")
-                        .append("        return local.clone();\n")
-                        .append("    }\n\n");
-            }
-        }
-        source.append("    @Override\n    public ").append(entityTypeName).append(" newInstance() {\n");
-        if (canInstantiate(entityType)) {
-            source.append("        return new ").append(entityType.getSimpleName()).append("();\n");
-        } else {
-            source.append("        throw new UnsupportedOperationException(\"Type cannot be instantiated without accessible no-arg constructor: ")
-                    .append(entityTypeName)
-                    .append("\");\n");
-        }
-        source.append("    }\n\n");
-        source.append("    @Override\n    public ClassInfo getClassInfo() {\n")
-                .append("        return initClassInfo();\n")
-                .append("    }\n\n");
-        source.append("    @Override\n    public Object invoke(").append(entityTypeName).append(" target, String method, Object[] args) {\n")
-                .append("        if (method == null) {\n")
-                .append("            throw new java.lang.IllegalArgumentException(\"method must not be null\");\n")
-                .append("        }\n")
-                .append("        switch (method) {\n");
-        for (ExecutableElement method : methods) {
-            source.append(buildInvokeCase(method));
-        }
-        source.append("            default:\n")
-                .append(parentReflectType != null
-                        ? "                return parentReflector().invoke((" + parentReflectTypeName + ") target, method, args);\n"
-                        : "                throw new java.lang.IllegalArgumentException(\"Unknown method: \" + method);\n")
-                .append("        }\n    }\n\n");
-        source.append("    @Override\n    public void set(").append(entityTypeName).append(" target, String property, Object value) {\n")
-                .append("        switch (property) {\n");
-        for (VariableElement field : fields) {
-            source.append(buildSetCase(entityType, field));
-        }
-        source.append("            default:\n")
-                .append(parentReflectType != null
-                        ? "                parentReflector().set((" + parentReflectTypeName + ") target, property, value);\n                return;\n"
-                        : "                return;\n")
-                .append("        }\n    }\n\n");
-        source.append("    @Override\n    public Object get(").append(entityTypeName).append(" target, String property) {\n")
-                .append("        switch (property) {\n");
-        for (VariableElement field : fields) {
-            source.append(buildGetCase(entityType, field));
-        }
-        source.append("            default:\n")
-                .append(parentReflectType != null
-                        ? "                return parentReflector().get((" + parentReflectTypeName + ") target, property);\n"
-                        : "                throw new java.lang.IllegalArgumentException(\"Unknown property: \" + property);\n")
-                .append("        }\n    }\n\n");
-        source.append("    @Override\n    public String[] getFields() {\n")
-                .append(includeFieldsMetadata
-                        ? parentReflectType != null
-                            ? "        return mergedFieldNames();\n"
-                            : "        return FIELD_NAMES.clone();\n"
-                        : parentReflectType != null
-                            ? "        return parentReflector().getFields();\n"
-                            : "        return new String[0];\n")
-                .append("    }\n\n");
-        source.append("    @Override\n    public boolean hasField(String field) {\n")
-                .append(includeFieldsMetadata
-                        ? "        if (field == null) {\n            return false;\n        }\n        return switch (field) {\n"
-                        : parentReflectType != null
-                            ? "        return field != null && parentReflector().hasField(field);\n"
-                            : "        return false;\n")
-                .append(includeFieldsMetadata
-                        ? buildFieldPresenceSwitch(fields, "            ", parentReflectType != null ? "parentReflector().hasField(field)" : "false")
-                        : "")
-                .append(includeFieldsMetadata
-                        ? "        };\n"
-                        : "")
-                .append("    }\n\n");
-        source.append("    @Override\n    public FieldInfo getField(String field) {\n")
-                .append(includeFieldsMetadata
-                        ? "        if (field == null) {\n            return null;\n        }\n        return switch (field) {\n"
-                        : parentReflectType != null
-                            ? "        return field == null ? null : parentReflector().getField(field);\n"
-                            : "        return null;\n")
-                .append(includeFieldsMetadata
-                        ? buildFieldInfoSwitch(fields, "            ", parentReflectType != null ? "parentReflector().getField(field)" : "null", useLazyMetadata)
-                        : "")
-                .append(includeFieldsMetadata
-                        ? "        };\n"
-                        : "")
-                .append("    }\n\n");
-        source.append("    @Override\n    public String[] getMethods() {\n")
-                .append(includeMethodsMetadata
-                        ? parentReflectType != null
-                            ? "        return mergedMethodNames();\n"
-                            : "        return METHOD_NAMES.clone();\n"
-                        : parentReflectType != null
-                            ? "        return parentReflector().getMethods();\n"
-                            : "        return new String[0];\n")
-                .append("    }\n\n");
-        source.append("    @Override\n    public boolean hasMethod(String name) {\n")
-                .append(includeMethodsMetadata
-                        ? "        if (name == null) {\n            return false;\n        }\n        return switch (name) {\n"
-                        : parentReflectType != null
-                            ? "        return name != null && parentReflector().hasMethod(name);\n"
-                            : "        return false;\n")
-                .append(includeMethodsMetadata
-                        ? buildMethodPresenceSwitch(methodsByName, "            ", parentReflectType != null ? "parentReflector().hasMethod(name)" : "false")
-                        : "")
-                .append(includeMethodsMetadata
-                        ? "        };\n"
-                        : "")
-                .append("    }\n\n");
-        source.append("    @Override\n    public MethodInfo[] getMethod(String name) {\n")
-                .append(includeMethodsMetadata
-                        ? "        if (name == null) {\n            return NO_METHODS;\n        }\n        return switch (name) {\n"
-                        : parentReflectType != null
-                            ? "        return name == null ? NO_METHODS : parentReflector().getMethod(name);\n"
-                            : "        return NO_METHODS;\n")
-                .append(includeMethodsMetadata
-                        ? buildMethodInfoArraySwitch(methodsByName, "            ", parentReflectType != null ? "parentReflector().getMethod(name)" : "NO_METHODS", useLazyMetadata, parentReflectType != null)
-                        : "")
-                .append(includeMethodsMetadata
-                        ? "        };\n"
-                        : "")
-                .append("    }\n}\n");
-        String generated = source.toString();
+        String generated = reflectorSourceGenerator.buildReflectorSource(packageName, generatedSimpleName, entityType);
         this.activeTypeConstants = Map.of();
         return generated;
     }
@@ -925,6 +598,15 @@ public class KoraProcessor extends AbstractProcessor {
         StringBuilder source = new StringBuilder();
         for (VariableElement field : fields) {
             source.append(indent).append("case \"").append(field.getSimpleName()).append("\" -> true;\n");
+        }
+        source.append(indent).append("default -> ").append(defaultExpression).append(";\n");
+        return source.toString();
+    }
+
+    private String buildExpandedFieldPresenceSwitch(TypeElement entityType, List<String> fieldNames, String indent, String defaultExpression) {
+        StringBuilder source = new StringBuilder();
+        for (String fieldName : fieldNames) {
+            source.append(indent).append("case \"").append(fieldName).append("\" -> true;\n");
         }
         source.append(indent).append("default -> ").append(defaultExpression).append(";\n");
         return source.toString();
@@ -939,6 +621,39 @@ public class KoraProcessor extends AbstractProcessor {
         }
         source.append(indent).append("default -> ").append(defaultExpression).append(";\n");
         return source.toString();
+    }
+
+    private String buildExpandedFieldInfoSwitch(TypeElement entityType, List<VariableElement> localFields, List<String> fieldNames, String indent, String defaultExpression, boolean useLazyMetadata) {
+        Map<String, Integer> localIndexes = new LinkedHashMap<>();
+        for (int i = 0; i < localFields.size(); i++) {
+            localIndexes.put(localFields.get(i).getSimpleName().toString(), i);
+        }
+        StringBuilder source = new StringBuilder();
+        for (String fieldName : fieldNames) {
+            Integer localIndex = localIndexes.get(fieldName);
+            if (localIndex != null) {
+                source.append(indent).append("case \"").append(fieldName).append("\" -> ")
+                        .append(useLazyMetadata ? "initField(" + localIndex + ")" : "FIELDS[" + localIndex + "]")
+                        .append(";\n");
+            } else {
+                source.append(indent).append("case \"").append(fieldName).append("\" -> parentReflector().getField(\"")
+                        .append(fieldName).append("\");\n");
+            }
+        }
+        source.append(indent).append("default -> ").append(defaultExpression).append(";\n");
+        return source.toString();
+    }
+
+    private List<String> expandedFieldNames(TypeElement entityType) {
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        for (VariableElement field : collectInstanceFields(entityType)) {
+            names.add(field.getSimpleName().toString());
+        }
+        TypeElement superType = directSuperType(entityType);
+        if (superType != null && !isJavaLangObject(superType) && reflectSpecs.containsKey(superType.getQualifiedName().toString())) {
+            names.addAll(expandedFieldNames(superType));
+        }
+        return new ArrayList<>(names);
     }
 
     private String buildMethodPresenceSwitch(Map<String, List<ExecutableElement>> methodsByName, String indent, String defaultExpression) {
@@ -1174,9 +889,7 @@ public class KoraProcessor extends AbstractProcessor {
 
     private String renderAnnotationArray(List<? extends AnnotationMirror> annotations, boolean includeAnnotationMetadata) {
         List<? extends AnnotationMirror> includedAnnotations = annotations.stream()
-                .filter(annotation -> includeAnnotationMetadata
-                        ? isRuntimeVisibleAnnotation(annotation) || isAliasAnnotation(annotation)
-                        : isAliasAnnotation(annotation))
+                .filter(annotation -> includeAnnotationMetadata && isRuntimeVisibleAnnotation(annotation))
                 .toList();
         if (includedAnnotations.isEmpty()) {
             return "NO_ANNOTATIONS";
@@ -1194,7 +907,7 @@ public class KoraProcessor extends AbstractProcessor {
 
     private String renderFieldAnnotationArray(VariableElement field, boolean includeAnnotationMetadata) {
         List<? extends AnnotationMirror> includedAnnotations = field.getAnnotationMirrors().stream()
-                .filter(annotation -> !isAliasAnnotation(annotation) && includeAnnotationMetadata && isRuntimeVisibleAnnotation(annotation))
+                .filter(annotation -> includeAnnotationMetadata && isRuntimeVisibleAnnotation(annotation))
                 .toList();
         if (includedAnnotations.isEmpty()) {
             return "NO_ANNOTATIONS";
@@ -1224,10 +937,6 @@ public class KoraProcessor extends AbstractProcessor {
             }
         }
         return false;
-    }
-
-    private boolean isAliasAnnotation(AnnotationMirror annotationMirror) {
-        return annotationMirror.getAnnotationType().toString().equals("com.nicleo.kora.core.annotation.Alias");
     }
 
     private String renderAnnotationLiteral(AnnotationMirror annotationMirror) {
@@ -1326,185 +1035,19 @@ public class KoraProcessor extends AbstractProcessor {
     }
 
     private String buildSupportSource(ScanSpec scanSpec) {
-        String packageName = packageNameOf(scanSpec.configType);
-        String simpleName = supportSimpleName(scanSpec);
-        StringBuilder source = new StringBuilder();
-        if (!packageName.isEmpty()) {
-            source.append("package ").append(packageName).append(";\n\n");
-        }
-        source.append("public final class ").append(simpleName).append(" {\n")
-                .append("    private static volatile boolean installed;\n\n")
-                .append("    private ").append(simpleName).append("() {\n    }\n\n")
-                .append("    public static void install() {\n")
-                .append("        if (installed) {\n            return;\n        }\n")
-                .append("        synchronized (").append(simpleName).append(".class) {\n")
-                .append("            if (installed) {\n                return;\n            }\n")
-                .append("            com.nicleo.kora.core.runtime.GeneratedReflectors.install(new Resolver());\n")
-                .append("            installed = true;\n")
-                .append("        }\n")
-                .append("    }\n\n")
-                .append("    private static final class Resolver implements com.nicleo.kora.core.runtime.GeneratedReflectors.Resolver {\n")
-                .append("        @Override\n")
-                .append("        @SuppressWarnings(\"unchecked\")\n")
-                .append("        public <T> com.nicleo.kora.core.runtime.GeneratedReflector<T> get(Class<T> type) {\n");
-        for (ReflectSpec spec : reflectSpecs.values()) {
-            source.append("            if (type == ").append(spec.typeElement.getQualifiedName()).append(".class) {\n")
-                    .append("                return (com.nicleo.kora.core.runtime.GeneratedReflector<T>) new ")
-                    .append(spec.typeElement.getQualifiedName()).append(spec.suffix).append("();\n")
-                    .append("            }\n");
-        }
-        source.append("            throw new com.nicleo.kora.core.runtime.SqlSessionException(\"No GeneratedReflector for type: \" + type.getName());\n")
-                .append("        }\n")
-                .append("    }\n")
-                .append("}\n");
-        return source.toString();
+        return mapperSourceGenerator.buildSupportSource(scanSpec, new ArrayList<>(reflectSpecs.values()));
     }
 
     private String buildMapperSource(String packageName, String generatedSimpleName, TypeElement mapperType, MapperXmlDefinition xmlDefinition, String supportClassName) {
         List<MapperMethodSpec> mapperMethods = mapperMethods(mapperType, xmlDefinition);
-        List<MapperCapabilityDelegateSpec> capabilityDelegates = mapperCapabilityDelegates(mapperType, mapperMethods);
-        String mapperEntityTypeLiteral = mapperEntityTypeLiteral(mapperType);
-        TypeElement mapperEntityType = mapperEntityType(mapperType);
-        StringBuilder source = new StringBuilder();
-        if (!packageName.isEmpty()) {
-            source.append("package ").append(packageName).append(";\n\n");
-        }
-        source.append("public final class ").append(generatedSimpleName)
-                .append(" extends com.nicleo.kora.core.runtime.AbstractMapper<").append(mapperEntityTypeLiteral).append(">")
-                .append(" implements ").append(mapperType.getQualifiedName()).append(" {\n\n");
-        for (MapperCapabilityDelegateSpec delegate : capabilityDelegates) {
-            source.append("    private final ").append(delegate.interfaceTypeLiteral()).append(' ')
-                    .append(delegate.fieldName()).append(";\n\n");
-        }
-        for (MapperMethodSpec mapperMethod : mapperMethods) {
-            source.append("    private static final com.nicleo.kora.core.dynamic.DynamicSqlNode ")
-                        .append(statementFieldName(mapperMethod.statement().id()))
-                        .append(" = ")
-                        .append(renderSqlNode(mapperMethod.statement().rootSqlNode()))
-                        .append(";\n\n");
-        }
-        source.append("    public ").append(generatedSimpleName).append('(').append(SQL_SESSION).append(" sqlSession) {\n")
-                .append("        super(sqlSession, ").append(tableConstantReference(mapperEntityType)).append(");\n")
-                .append("        ").append(supportClassName).append(".install();\n");
-        for (MapperCapabilityDelegateSpec delegate : capabilityDelegates) {
-            source.append("        this.").append(delegate.fieldName()).append(" = ")
-                    .append(delegate.instantiation()).append(";\n");
-        }
-        source.append("    }\n\n");
-        for (MapperMethodSpec mapperMethod : mapperMethods) {
-            source.append(buildMethod(mapperType, mapperMethod.method(), mapperMethod.statement()));
-        }
-        for (MapperCapabilityDelegateSpec delegate : capabilityDelegates) {
-            for (MapperCapabilityMethodSpec method : delegate.methods()) {
-                source.append(buildCapabilityMethod(method, delegate.fieldName()));
-            }
-        }
-        source.append("}\n");
-        return source.toString();
-    }
-
-    private String buildMethod(TypeElement mapperType, ExecutableElement method, SqlNodeDefinition statement) {
-        String pagingArgument = renderPagingArgument(method);
-        StringBuilder source = new StringBuilder();
-        source.append("    @Override\n")
-                .append("    public ").append(method.getReturnType()).append(' ').append(method.getSimpleName()).append('(')
-                .append(renderParameters(method)).append(") {\n")
-                .append("        java.util.Map<String, Object> params = com.nicleo.kora.core.dynamic.MapperParameters.build(")
-                .append(renderParameterNames(method)).append(", ").append(renderParameterValues(method)).append(");\n")
-                .append("        com.nicleo.kora.core.runtime.BoundSql boundSql = com.nicleo.kora.core.dynamic.DynamicSqlRenderer.render(")
-                .append(statementFieldName(statement.id())).append(", params);\n")
-                .append("        com.nicleo.kora.core.runtime.SqlExecutionContext context = new com.nicleo.kora.core.runtime.SqlExecutionContext(")
-                .append("sqlSession, ")
-                .append('"').append(mapperType.getQualifiedName()).append('"').append(", ")
-                .append('"').append(method.getSimpleName()).append('"').append(", ")
-                .append('"').append(statement.id()).append('"').append(", ")
-                .append("com.nicleo.kora.core.xml.SqlCommandType.").append(statement.commandType().name()).append(", ")
-                .append(renderResultTypeLiteral(method, statement)).append(", ")
-                .append(pagingArgument).append(", true);\n")
-                .append("        String sql = boundSql.getSql();\n")
-                .append("        Object[] args = com.nicleo.kora.core.dynamic.DynamicSqlArgumentResolver.resolve(boundSql);\n")
-                .append(renderExecution(mapperType, method, statement))
-                .append("    }\n\n");
-        return source.toString();
-    }
-
-    private String renderParameters(ExecutableElement method) {
-        List<? extends VariableElement> parameters = method.getParameters();
-        StringBuilder builder = new StringBuilder();
-        for (int i = 0; i < parameters.size(); i++) {
-            if (i > 0) {
-                builder.append(", ");
-            }
-            VariableElement parameter = parameters.get(i);
-            builder.append(parameter.asType()).append(' ').append(parameter.getSimpleName());
-        }
-        return builder.toString();
-    }
-
-    private String renderParameters(List<String> parameterTypes, List<String> parameterNames) {
-        StringBuilder builder = new StringBuilder();
-        for (int i = 0; i < parameterTypes.size(); i++) {
-            if (i > 0) {
-                builder.append(", ");
-            }
-            builder.append(parameterTypes.get(i)).append(' ').append(parameterNames.get(i));
-        }
-        return builder.toString();
-    }
-
-    private String renderParameterNames(ExecutableElement method) {
-        StringBuilder builder = new StringBuilder("new String[]{");
-        List<? extends VariableElement> parameters = method.getParameters();
-        for (int i = 0; i < parameters.size(); i++) {
-            if (i > 0) {
-                builder.append(", ");
-            }
-            builder.append('"').append(parameters.get(i).getSimpleName()).append('"');
-        }
-        builder.append('}');
-        return builder.toString();
-    }
-
-    private String renderParameterValues(ExecutableElement method) {
-        StringBuilder builder = new StringBuilder("new Object[]{");
-        List<? extends VariableElement> parameters = method.getParameters();
-        for (int i = 0; i < parameters.size(); i++) {
-            if (i > 0) {
-                builder.append(", ");
-            }
-            builder.append(parameters.get(i).getSimpleName());
-        }
-        builder.append('}');
-        return builder.toString();
-    }
-
-    private String renderParameterValues(List<String> parameterNames) {
-        StringBuilder builder = new StringBuilder();
-        for (int i = 0; i < parameterNames.size(); i++) {
-            if (i > 0) {
-                builder.append(", ");
-            }
-            builder.append(parameterNames.get(i));
-        }
-        return builder.toString();
-    }
-
-    private String buildCapabilityMethod(MapperCapabilityMethodSpec method, String fieldName) {
-        StringBuilder source = new StringBuilder();
-        source.append("    @Override\n")
-                .append("    public ").append(method.returnType()).append(' ').append(method.methodName()).append('(')
-                .append(renderParameters(method.parameterTypes(), method.parameterNames())).append(") {\n")
-                .append("        ");
-        if (!"void".equals(method.returnType())) {
-            source.append("return ");
-        }
-        source.append(fieldName).append('.').append(method.methodName()).append('(')
-                .append(renderParameterValues(method.parameterNames())).append(");\n");
-        if ("void".equals(method.returnType())) {
-            source.append("        return;\n");
-        }
-        source.append("    }\n\n");
-        return source.toString();
+        return mapperSourceGenerator.buildMapperSource(
+                packageName,
+                generatedSimpleName,
+                mapperType,
+                mapperMethods,
+                mapperCapabilityDelegates(mapperType, mapperMethods),
+                supportClassName
+        );
     }
 
     private String renderExecution(TypeElement mapperType, ExecutableElement method, SqlNodeDefinition statement) {
@@ -1513,26 +1056,26 @@ public class KoraProcessor extends AbstractProcessor {
         if (commandType == SqlCommandType.SELECT) {
             if (isPageReturn(returnType)) {
                 TypeMirror elementType = extractPageElementType(returnType);
-                reflectSpecFor(asTypeElement(elementType));
+                ensureReflectorIfNeeded(elementType);
                 String pagingName = pagingParameterName(method);
                 if (pagingName == null) {
                     throw new ProcessorException("Page<T> select method must declare a Paging parameter: " + mapperType.getQualifiedName() + "." + method.getSimpleName());
                 }
-                return "        return sqlSession.getSqlPagingSupport().page(sqlSession, context, sql, args, " + pagingName + ", " + elementType + ".class);\n";
+                return "        return " + renderTypeCast(returnType,
+                        "sqlSession.getSqlPagingSupport().page(sqlSession, context, sql, args, " + pagingName + ", " + classLiteral(elementType) + ")") + ";\n";
             }
             if (isListReturn(returnType)) {
                 TypeMirror elementType = extractListElementType(returnType);
-                reflectSpecFor(asTypeElement(elementType));
-                return "        return sqlSession.selectList(sql, args, context, " + elementType + ".class);\n";
+                ensureReflectorIfNeeded(elementType);
+                return "        return " + renderTypeCast(returnType,
+                        "sqlSession.selectList(sql, args, context, " + classLiteral(elementType) + ")") + ";\n";
             }
             if (returnType.getKind() == TypeKind.VOID) {
                 throw new ProcessorException("Select method cannot return void: " + mapperType.getQualifiedName() + "." + method.getSimpleName());
             }
-            if (returnType.getKind().isPrimitive()) {
-                throw new ProcessorException("Select method must return an entity or List<entity>, not primitive: " + mapperType.getQualifiedName() + "." + method.getSimpleName());
-            }
-            reflectSpecFor(asTypeElement(returnType));
-            return "        return sqlSession.selectOne(sql, args, context, " + returnType + ".class);\n";
+            ensureReflectorIfNeeded(returnType);
+            return "        return " + renderTypeCast(returnType,
+                    "sqlSession.selectOne(sql, args, context, " + classLiteral(returnType) + ")") + ";\n";
         }
         if (returnType.getKind() == TypeKind.INT) {
             return "        return sqlSession.update(sql, args, context);\n";
@@ -1549,12 +1092,12 @@ public class KoraProcessor extends AbstractProcessor {
         }
         TypeMirror returnType = method.getReturnType();
         if (isPageReturn(returnType)) {
-            return extractPageElementType(returnType) + ".class";
+            return classLiteral(extractPageElementType(returnType));
         }
         if (isListReturn(returnType)) {
-            return extractListElementType(returnType) + ".class";
+            return classLiteral(extractListElementType(returnType));
         }
-        return returnType + ".class";
+        return classLiteral(returnType);
     }
 
     private boolean isListReturn(TypeMirror returnType) {
@@ -1591,14 +1134,20 @@ public class KoraProcessor extends AbstractProcessor {
         if (statement.commandType() == SqlCommandType.SELECT) {
             TypeMirror returnType = method.getReturnType();
             if (isPageReturn(returnType)) {
-                registerReflectTypes(((DeclaredType) returnType).getTypeArguments().getFirst());
+                TypeMirror elementType = ((DeclaredType) returnType).getTypeArguments().getFirst();
+                validateMapperTypeSupport(elementType, mapperTypeContext(method, "return"));
+                registerReflectTypes(elementType);
             } else if (isListReturn(returnType)) {
-                registerReflectTypes(((DeclaredType) returnType).getTypeArguments().getFirst());
+                TypeMirror elementType = ((DeclaredType) returnType).getTypeArguments().getFirst();
+                validateMapperTypeSupport(elementType, mapperTypeContext(method, "return"));
+                registerReflectTypes(elementType);
             } else if (returnType.getKind() != TypeKind.VOID && !returnType.getKind().isPrimitive()) {
+                validateMapperTypeSupport(returnType, mapperTypeContext(method, "return"));
                 registerReflectTypes(returnType);
             }
         }
         for (VariableElement parameter : method.getParameters()) {
+            validateMapperTypeSupport(parameter.asType(), mapperTypeContext(method, "parameter '" + parameter.getSimpleName() + "'"));
             registerReflectTypes(parameter.asType());
         }
     }
@@ -1636,7 +1185,7 @@ public class KoraProcessor extends AbstractProcessor {
         if (!visiting.add(qualifiedName)) {
             return;
         }
-        reflectSpecs.putIfAbsent(qualifiedName, new ReflectSpec(typeElement, "Reflector", ReflectMetadataLevel.FIELDS, false));
+        reflectSpecs.putIfAbsent(qualifiedName, new ReflectSpec(typeElement, "Reflector", ReflectMetadataLevel.BASIC, false));
         TypeElement superType = directSuperType(typeElement);
         if (superType != null && !isJavaLangObject(superType) && shouldAutoReflect(superType)) {
             registerReflectType(superType, visiting);
@@ -1655,6 +1204,92 @@ public class KoraProcessor extends AbstractProcessor {
         return !packageName.startsWith("java.")
                 && !packageName.startsWith("javax.")
                 && !packageName.startsWith("jakarta.");
+    }
+
+    private void ensureReflectorIfNeeded(TypeMirror typeMirror) {
+        TypeElement typeElement = asTypeElement(typeMirror);
+        if (typeElement != null && shouldAutoReflect(typeElement)) {
+            reflectSpecFor(typeElement);
+        }
+    }
+
+    private void validateMapperTypeSupport(TypeMirror typeMirror, String usage) {
+        if (typeMirror == null || typeMirror.getKind() == TypeKind.VOID || typeMirror.getKind().isPrimitive()) {
+            return;
+        }
+        if (typeMirror instanceof ArrayType arrayType) {
+            validateMapperTypeSupport(arrayType.getComponentType(), usage);
+            return;
+        }
+        if (typeMirror instanceof WildcardType wildcardType) {
+            validateMapperTypeSupport(wildcardType.getExtendsBound(), usage);
+            validateMapperTypeSupport(wildcardType.getSuperBound(), usage);
+            return;
+        }
+        if (!(typeMirror instanceof DeclaredType declaredType)) {
+            return;
+        }
+        TypeElement typeElement = asTypeElement(typeMirror);
+        if (typeElement == null) {
+            return;
+        }
+        if (isSupportedMapperJavaType(typeElement, declaredType)) {
+            for (TypeMirror typeArgument : declaredType.getTypeArguments()) {
+                validateMapperTypeSupport(typeArgument, usage);
+            }
+            return;
+        }
+        String packageName = packageNameOf(typeElement);
+        if (packageName.startsWith("java.") || packageName.startsWith("javax.") || packageName.startsWith("jakarta.")) {
+            throw new ProcessorException("Unsupported mapper " + usage + " type: " + typeElement.getQualifiedName());
+        }
+    }
+
+    private boolean isSupportedMapperJavaType(TypeElement typeElement, DeclaredType declaredType) {
+        String qualifiedName = typeElement.getQualifiedName().toString();
+        if (qualifiedName.equals("java.lang.String")
+                || qualifiedName.equals("java.lang.Boolean")
+                || qualifiedName.equals("java.lang.Byte")
+                || qualifiedName.equals("java.lang.Short")
+                || qualifiedName.equals("java.lang.Integer")
+                || qualifiedName.equals("java.lang.Long")
+                || qualifiedName.equals("java.lang.Float")
+                || qualifiedName.equals("java.lang.Double")
+                || qualifiedName.equals("java.lang.Character")
+                || qualifiedName.equals("java.lang.Object")
+                || qualifiedName.equals("java.math.BigDecimal")
+                || qualifiedName.equals("java.math.BigInteger")
+                || qualifiedName.equals("java.util.UUID")
+                || qualifiedName.equals("java.time.LocalDate")
+                || qualifiedName.equals("java.time.LocalDateTime")
+                || qualifiedName.equals("java.time.LocalTime")
+                || qualifiedName.equals("java.time.Instant")
+                || qualifiedName.equals("java.time.OffsetDateTime")
+                || qualifiedName.equals("java.time.OffsetTime")
+                || qualifiedName.equals("java.time.ZonedDateTime")) {
+            return true;
+        }
+        TypeElement mapType = elements.getTypeElement("java.util.Map");
+        if (mapType != null && types.isAssignable(types.erasure(declaredType), types.erasure(mapType.asType()))) {
+            return true;
+        }
+        TypeElement collectionType = elements.getTypeElement("java.util.Collection");
+        if (collectionType != null && types.isAssignable(types.erasure(declaredType), types.erasure(collectionType.asType()))) {
+            return true;
+        }
+        return typeElement.getKind() == ElementKind.ENUM;
+    }
+
+    private String mapperTypeContext(ExecutableElement method, String position) {
+        TypeElement owner = (TypeElement) method.getEnclosingElement();
+        return position + " type for mapper method " + owner.getQualifiedName() + "." + method.getSimpleName();
+    }
+
+    private String renderTypeCast(TypeMirror targetType, String expression) {
+        if (targetType instanceof DeclaredType declaredType && !declaredType.getTypeArguments().isEmpty()) {
+            return "(" + targetType + ") (" + types.erasure(targetType) + ") " + expression;
+        }
+        return expression;
     }
 
     private TypeElement asTypeElement(TypeMirror typeMirror) {
@@ -1851,7 +1486,7 @@ public class KoraProcessor extends AbstractProcessor {
     private String tableConstantReference(TypeElement entityType) {
         String queryPackage = queryPackageNameOf(entityType);
         String tableSimpleName = entityType.getSimpleName() + "Table";
-        return queryPackage + "." + tableSimpleName + "." + constantName(resolveTableName(entityType));
+        return queryPackage + "." + tableSimpleName + ".TABLE";
     }
 
     private TypeElement mapperCapabilityContractType(TypeElement implType) {
@@ -1910,6 +1545,55 @@ public class KoraProcessor extends AbstractProcessor {
             }
         }
         return false;
+    }
+
+    private String renderNewInstanceExpression(TypeElement typeElement) {
+        if (typeElement.getModifiers().contains(Modifier.ABSTRACT)) {
+            return null;
+        }
+        List<ExecutableElement> constructors = new ArrayList<>();
+        for (Element enclosedElement : typeElement.getEnclosedElements()) {
+            if (enclosedElement.getKind() == ElementKind.CONSTRUCTOR) {
+                constructors.add((ExecutableElement) enclosedElement);
+            }
+        }
+        if (constructors.isEmpty()) {
+            return "new " + typeElement.getQualifiedName() + "()";
+        }
+        ExecutableElement preferred = null;
+        for (ExecutableElement constructor : constructors) {
+            if (constructor.getModifiers().contains(Modifier.PRIVATE)) {
+                continue;
+            }
+            if (preferred == null || constructor.getParameters().size() < preferred.getParameters().size()) {
+                preferred = constructor;
+            }
+            if (constructor.getParameters().isEmpty()) {
+                preferred = constructor;
+                break;
+            }
+        }
+        if (preferred == null) {
+            return null;
+        }
+        String arguments = preferred.getParameters().stream()
+                .map(parameter -> renderDefaultValue(parameter.asType()))
+                .collect(Collectors.joining(", "));
+        return "new " + typeElement.getQualifiedName() + "(" + arguments + ")";
+    }
+
+    private String renderDefaultValue(TypeMirror typeMirror) {
+        return switch (typeMirror.getKind()) {
+            case BOOLEAN -> "false";
+            case BYTE -> "(byte) 0";
+            case SHORT -> "(short) 0";
+            case INT -> "0";
+            case LONG -> "0L";
+            case CHAR -> "'\\0'";
+            case FLOAT -> "0F";
+            case DOUBLE -> "0D";
+            default -> "null";
+        };
     }
 
     private ReflectSpec reflectSpecFor(TypeElement typeElement) {
@@ -2195,15 +1879,15 @@ public class KoraProcessor extends AbstractProcessor {
         source.append("            case \"").append(fieldName).append("\":\n");
         if (setter != null) {
             source.append("                target.").append(setter.getSimpleName()).append("((").append(fieldType).append(") value);\n");
+            source.append("                return;\n");
         } else if (!field.getModifiers().contains(Modifier.PRIVATE)) {
             source.append("                target.").append(fieldName).append(" = (")
                     .append(fieldType).append(") value;\n");
-        } else {
-            messager.printMessage(Diagnostic.Kind.ERROR, "@Reflect field requires setter or non-private access: " + entityType.getQualifiedName() + "." + fieldName, field);
             source.append("                return;\n");
+        } else {
+            source.append("                throw new UnsupportedOperationException(\"No setter or field access for property: ").append(fieldName).append("\");\n");
             return source.toString();
         }
-        source.append("                return;\n");
         return source.toString();
     }
 
@@ -2220,8 +1904,7 @@ public class KoraProcessor extends AbstractProcessor {
         } else if (!field.getModifiers().contains(Modifier.PRIVATE)) {
             source.append("                return target.").append(fieldName).append(";\n");
         } else {
-            messager.printMessage(Diagnostic.Kind.ERROR, "@Reflect field requires getter or non-private access: " + entityType.getQualifiedName() + "." + fieldName, field);
-            source.append("                throw new java.lang.IllegalArgumentException(\"Unknown property: \" + property);\n");
+            source.append("                throw new UnsupportedOperationException(\"No getter or field access for property: ").append(fieldName).append("\");\n");
         }
         return source.toString();
     }
@@ -2422,7 +2105,7 @@ public class KoraProcessor extends AbstractProcessor {
                 .replace("\n", "\\n");
     }
 
-    private static final class ReflectSpec {
+    static final class ReflectSpec {
         private final TypeElement typeElement;
         private final String suffix;
         private final ReflectMetadataLevel metadataLevel;
@@ -2434,18 +2117,34 @@ public class KoraProcessor extends AbstractProcessor {
             this.metadataLevel = metadataLevel;
             this.annotationMetadata = annotationMetadata;
         }
+
+        TypeElement typeElement() {
+            return typeElement;
+        }
+
+        String suffix() {
+            return suffix;
+        }
+
+        ReflectMetadataLevel metadataLevel() {
+            return metadataLevel;
+        }
+
+        boolean annotationMetadata() {
+            return annotationMetadata;
+        }
     }
 
-    private record MapperMethodSpec(ExecutableElement method, SqlNodeDefinition statement) {
+    record MapperMethodSpec(ExecutableElement method, SqlNodeDefinition statement) {
     }
 
-    private record IdGenerationSpec(String strategy, String generatorInstantiation) {
+    record IdGenerationSpec(String strategy, String generatorInstantiation) {
     }
 
     private record MapperCapabilitySpec(TypeElement contractType, TypeElement implType) {
     }
 
-    private record MapperCapabilityDelegateSpec(
+    record MapperCapabilityDelegateSpec(
             String fieldName,
             String interfaceTypeLiteral,
             String instantiation,
@@ -2453,7 +2152,7 @@ public class KoraProcessor extends AbstractProcessor {
     ) {
     }
 
-    private record MapperCapabilityMethodSpec(
+    record MapperCapabilityMethodSpec(
             String methodName,
             String returnType,
             List<String> parameterTypes,
@@ -2466,7 +2165,7 @@ public class KoraProcessor extends AbstractProcessor {
         SQL_SESSION_AND_ENTITY_TABLE
     }
 
-    private static final class ScanSpec {
+    static final class ScanSpec {
         private final TypeElement configType;
         private final String configQualifiedName;
         private final List<String> xmlRoots;
@@ -2481,14 +2180,18 @@ public class KoraProcessor extends AbstractProcessor {
             this.entityPackages = entityPackages.stream().filter(value -> !value.isBlank()).map(String::trim).toList();
             this.mapperPackages = mapperPackages.stream().filter(value -> !value.isBlank()).map(String::trim).toList();
         }
+
+        TypeElement configType() {
+            return configType;
+        }
     }
 
-    private static final class ProcessorException extends RuntimeException {
-        private ProcessorException(String message) {
+    static final class ProcessorException extends RuntimeException {
+        ProcessorException(String message) {
             super(message);
         }
 
-        private ProcessorException(String message, Throwable cause) {
+        ProcessorException(String message, Throwable cause) {
             super(message, cause);
         }
     }

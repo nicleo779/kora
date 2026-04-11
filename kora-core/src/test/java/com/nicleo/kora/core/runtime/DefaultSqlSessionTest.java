@@ -10,6 +10,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -37,6 +38,7 @@ class DefaultSqlSessionTest {
         dataSource.setPassword("");
         this.sqlSession = new DefaultSqlSession(dataSource);
         sqlSession.clearTypeConverters();
+        GeneratedReflectors.clear();
         GeneratedReflectors.install(new TestReflectorResolver());
 
         sqlSession.update("drop table if exists user_account", new Object[0]);
@@ -170,7 +172,7 @@ class DefaultSqlSessionTest {
         UserAccount user = interceptedSession.selectOne(
                 "select id, user_name, age from user_account where id = ?",
                 new Object[]{1L},
-                new SqlExecutionContext(interceptedSession, "demo.Mapper", "selectById", "selectById", com.nicleo.kora.core.xml.SqlCommandType.SELECT, UserAccount.class, true),
+                new SqlExecutionContext(interceptedSession, "demo.Mapper", "selectById", com.nicleo.kora.core.xml.SqlCommandType.SELECT, UserAccount.class, true),
                 UserAccount.class
         );
 
@@ -179,7 +181,7 @@ class DefaultSqlSessionTest {
         assertEquals(1, contexts.size());
         assertSame(interceptedSession, contexts.get(0).getSqlSession());
         assertEquals("demo.Mapper", contexts.get(0).getMapperClassName());
-        assertEquals("selectById", contexts.get(0).getMapperMethodName());
+        assertEquals("selectById", contexts.get(0).getStatementId());
         assertEquals(UserAccount.class, contexts.get(0).getResultType());
     }
 
@@ -190,7 +192,7 @@ class DefaultSqlSessionTest {
         List<UserAccount> users = interceptedSession.selectList(
                 "select id, user_name, age from user_account order by id",
                 new Object[0],
-                new SqlExecutionContext(interceptedSession, "demo.Mapper", "pagedQuery", "pagedQuery", com.nicleo.kora.core.xml.SqlCommandType.SELECT, UserAccount.class, true),
+                new SqlExecutionContext(interceptedSession, "demo.Mapper", "pagedQuery", com.nicleo.kora.core.xml.SqlCommandType.SELECT, UserAccount.class, true),
                 UserAccount.class
         );
 
@@ -259,33 +261,35 @@ class DefaultSqlSessionTest {
         sqlSession.registerTypeConverter(new CustomTypeConverter() {
             @Override
             public boolean supports(Class<?> targetType) {
-                return targetType == LocalDateTime.class;
+                return targetType == YearMonth.class;
             }
 
             @Override
             public Object fromDb(Object value, Class<?> targetType) {
-                return ((Timestamp) value).toLocalDateTime();
+                LocalDateTime dateTime = ((Timestamp) value).toLocalDateTime();
+                return YearMonth.of(dateTime.getYear(), dateTime.getMonth());
             }
 
             @Override
             public Object toDb(Object value, Class<?> targetType) {
-                return Timestamp.valueOf((LocalDateTime) value);
+                YearMonth yearMonth = (YearMonth) value;
+                return Timestamp.valueOf(yearMonth.atDay(1).atStartOfDay());
             }
         });
         DefaultSqlSession isolatedSession = new DefaultSqlSession(dataSource);
 
-        TimeUserAccount converted = sqlSession.selectOne(
+        YearMonthUserAccount converted = sqlSession.selectOne(
                 "select id, user_name, age, created_at from user_account where id = ?",
                 new Object[]{1L},
-                TimeUserAccount.class
+                YearMonthUserAccount.class
         );
         assertNotNull(converted);
-        assertEquals(LocalDateTime.of(2024, 1, 2, 3, 4, 5), converted.getCreatedAt());
+        assertEquals(YearMonth.of(2024, 1), converted.getCreatedAt());
 
         RuntimeException ex = assertThrows(RuntimeException.class, () -> isolatedSession.selectOne(
                 "select id, user_name, age, created_at from user_account where id = ?",
                 new Object[]{1L},
-                TimeUserAccount.class
+                YearMonthUserAccount.class
         ));
         if (ex instanceof SqlSessionException sqlSessionException) {
             assertEquals(ClassCastException.class, sqlSessionException.getCause().getClass());
@@ -446,6 +450,9 @@ class DefaultSqlSessionTest {
             if (type == TimeUserAccount.class) {
                 return (GeneratedReflector<T>) new TimeUserAccountGeneratedReflector();
             }
+            if (type == YearMonthUserAccount.class) {
+                return (GeneratedReflector<T>) new YearMonthUserAccountGeneratedReflector();
+            }
             if (type == CountResult.class) {
                 return (GeneratedReflector<T>) new CountResultGeneratedReflector();
             }
@@ -530,6 +537,45 @@ class DefaultSqlSessionTest {
         }
 
         public void setCreatedAt(LocalDateTime createdAt) {
+            this.createdAt = createdAt;
+        }
+    }
+
+    static final class YearMonthUserAccount {
+        private long id;
+        private String userName;
+        private int age;
+        private YearMonth createdAt;
+
+        public long getId() {
+            return id;
+        }
+
+        public void setId(long id) {
+            this.id = id;
+        }
+
+        public String getUserName() {
+            return userName;
+        }
+
+        public void setUserName(String userName) {
+            this.userName = userName;
+        }
+
+        public int getAge() {
+            return age;
+        }
+
+        public void setAge(int age) {
+            this.age = age;
+        }
+
+        public YearMonth getCreatedAt() {
+            return createdAt;
+        }
+
+        public void setCreatedAt(YearMonth createdAt) {
             this.createdAt = createdAt;
         }
     }
@@ -677,6 +723,70 @@ class DefaultSqlSessionTest {
 
         @Override
         public Object get(TimeUserAccount target, String property) {
+            return switch (property) {
+                case "id" -> target.getId();
+                case "userName" -> target.getUserName();
+                case "age" -> target.getAge();
+                case "createdAt" -> target.getCreatedAt();
+                default -> throw new IllegalArgumentException("Unknown property: " + property);
+            };
+        }
+
+        @Override
+        public String[] getFields() {
+            return new String[]{"id", "userName", "age", "createdAt"};
+        }
+
+        @Override
+        public FieldInfo getField(String field) {
+            return switch (field) {
+                case "id" -> FIELDS[0];
+                case "userName" -> FIELDS[1];
+                case "age" -> FIELDS[2];
+                case "createdAt" -> FIELDS[3];
+                default -> null;
+            };
+        }
+    }
+
+    static final class YearMonthUserAccountGeneratedReflector implements GeneratedReflector<YearMonthUserAccount> {
+        private static final FieldInfo[] FIELDS = new FieldInfo[]{
+                new FieldInfo("id", Long.class, 0, null, new java.lang.annotation.Annotation[0]),
+                new FieldInfo("userName", String.class, 0, "login_name", new java.lang.annotation.Annotation[0]),
+                new FieldInfo("age", Integer.class, 0, null, new java.lang.annotation.Annotation[0]),
+                new FieldInfo("createdAt", YearMonth.class, 0, null, new java.lang.annotation.Annotation[0])
+        };
+
+        @Override
+        public YearMonthUserAccount newInstance() {
+            return new YearMonthUserAccount();
+        }
+
+        @Override
+        public Object invoke(YearMonthUserAccount target, String method, Object[] args) {
+            return switch (method) {
+                case "getId" -> target.getId();
+                case "getUserName" -> target.getUserName();
+                case "getAge" -> target.getAge();
+                case "getCreatedAt" -> target.getCreatedAt();
+                default -> throw new IllegalArgumentException("Unknown method: " + method);
+            };
+        }
+
+        @Override
+        public void set(YearMonthUserAccount target, String property, Object value) {
+            switch (property) {
+                case "id" -> target.setId((Long) value);
+                case "userName" -> target.setUserName((String) value);
+                case "age" -> target.setAge((Integer) value);
+                case "createdAt" -> target.setCreatedAt((YearMonth) value);
+                default -> {
+                }
+            }
+        }
+
+        @Override
+        public Object get(YearMonthUserAccount target, String property) {
             return switch (property) {
                 case "id" -> target.getId();
                 case "userName" -> target.getUserName();

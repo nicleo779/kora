@@ -68,8 +68,20 @@ public final class PredicateBuilder {
         return eq(true, expression, value);
     }
 
+    public PredicateBuilder eq(SqlExpression left, SqlExpression right) {
+        return eq(true, left, right);
+    }
+
+    public PredicateBuilder eqAlias(String alias, Object value) {
+        return eq(Expressions.aliasRef(alias), value);
+    }
+
     public PredicateBuilder eq(boolean include, SqlExpression expression, Object value) {
         return add("AND", include, Conditions.eq(expression, value));
+    }
+
+    public PredicateBuilder eq(boolean include, SqlExpression left, SqlExpression right) {
+        return add("AND", include, Conditions.eq(left, right));
     }
 
     public <T, V> PredicateBuilder eq(Column<T, V> column, V value) {
@@ -84,8 +96,20 @@ public final class PredicateBuilder {
         return ne(true, expression, value);
     }
 
+    public PredicateBuilder ne(SqlExpression left, SqlExpression right) {
+        return ne(true, left, right);
+    }
+
+    public PredicateBuilder neAlias(String alias, Object value) {
+        return ne(Expressions.aliasRef(alias), value);
+    }
+
     public PredicateBuilder ne(boolean include, SqlExpression expression, Object value) {
         return add("AND", include, Conditions.ne(expression, value));
+    }
+
+    public PredicateBuilder ne(boolean include, SqlExpression left, SqlExpression right) {
+        return add("AND", include, Conditions.ne(left, right));
     }
 
     public <T, V> PredicateBuilder ne(Column<T, V> column, V value) {
@@ -100,8 +124,20 @@ public final class PredicateBuilder {
         return gt(true, expression, value);
     }
 
+    public PredicateBuilder gt(SqlExpression left, SqlExpression right) {
+        return gt(true, left, right);
+    }
+
+    public PredicateBuilder gtAlias(String alias, Object value) {
+        return gt(Expressions.aliasRef(alias), value);
+    }
+
     public PredicateBuilder gt(boolean include, SqlExpression expression, Object value) {
         return add("AND", include, Conditions.gt(expression, value));
+    }
+
+    public PredicateBuilder gt(boolean include, SqlExpression left, SqlExpression right) {
+        return add("AND", include, Conditions.gt(left, right));
     }
 
     public <T, V> PredicateBuilder gt(Column<T, V> column, V value) {
@@ -116,8 +152,20 @@ public final class PredicateBuilder {
         return ge(true, expression, value);
     }
 
+    public PredicateBuilder ge(SqlExpression left, SqlExpression right) {
+        return ge(true, left, right);
+    }
+
+    public PredicateBuilder geAlias(String alias, Object value) {
+        return ge(Expressions.aliasRef(alias), value);
+    }
+
     public PredicateBuilder ge(boolean include, SqlExpression expression, Object value) {
         return add("AND", include, Conditions.ge(expression, value));
+    }
+
+    public PredicateBuilder ge(boolean include, SqlExpression left, SqlExpression right) {
+        return add("AND", include, Conditions.ge(left, right));
     }
 
     public <T, V> PredicateBuilder ge(Column<T, V> column, V value) {
@@ -132,8 +180,20 @@ public final class PredicateBuilder {
         return lt(true, expression, value);
     }
 
+    public PredicateBuilder lt(SqlExpression left, SqlExpression right) {
+        return lt(true, left, right);
+    }
+
+    public PredicateBuilder ltAlias(String alias, Object value) {
+        return lt(Expressions.aliasRef(alias), value);
+    }
+
     public PredicateBuilder lt(boolean include, SqlExpression expression, Object value) {
         return add("AND", include, Conditions.lt(expression, value));
+    }
+
+    public PredicateBuilder lt(boolean include, SqlExpression left, SqlExpression right) {
+        return add("AND", include, Conditions.lt(left, right));
     }
 
     public <T, V> PredicateBuilder lt(Column<T, V> column, V value) {
@@ -148,8 +208,20 @@ public final class PredicateBuilder {
         return le(true, expression, value);
     }
 
+    public PredicateBuilder le(SqlExpression left, SqlExpression right) {
+        return le(true, left, right);
+    }
+
+    public PredicateBuilder leAlias(String alias, Object value) {
+        return le(Expressions.aliasRef(alias), value);
+    }
+
     public PredicateBuilder le(boolean include, SqlExpression expression, Object value) {
         return add("AND", include, Conditions.le(expression, value));
+    }
+
+    public PredicateBuilder le(boolean include, SqlExpression left, SqlExpression right) {
+        return add("AND", include, Conditions.le(left, right));
     }
 
     public <T, V> PredicateBuilder le(Column<T, V> column, V value) {
@@ -162,6 +234,10 @@ public final class PredicateBuilder {
 
     public PredicateBuilder like(SqlExpression expression, String value) {
         return like(true, expression, value);
+    }
+
+    public PredicateBuilder likeAlias(String alias, String value) {
+        return like(Expressions.aliasRef(alias), value);
     }
 
     public PredicateBuilder like(boolean include, SqlExpression expression, String value) {

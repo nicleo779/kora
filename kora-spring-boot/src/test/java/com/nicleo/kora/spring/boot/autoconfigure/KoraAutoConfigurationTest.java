@@ -12,6 +12,11 @@ import com.nicleo.kora.core.query.Page;
 import com.nicleo.kora.core.query.Paging;
 import com.nicleo.kora.core.query.QueryWrapper;
 import com.nicleo.kora.core.query.Wrapper;
+import com.nicleo.kora.core.annotation.KoraScan;
+import com.nicleo.kora.spring.boot.autoconfigure.collision.CollisionMapperKoraConfig;
+import com.nicleo.kora.spring.boot.autoconfigure.mapper.TestUser;
+import com.nicleo.kora.spring.boot.autoconfigure.mapper.TestMapperKoraConfig;
+import com.nicleo.kora.spring.boot.autoconfigure.mapper.TestUserMapper;
 import com.nicleo.kora.spring.boot.SpringTransactionSqlSession;
 import com.nicleo.kora.spring.boot.Sql;
 import org.junit.jupiter.api.Test;
@@ -30,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class KoraAutoConfigurationTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
@@ -71,6 +77,7 @@ class KoraAutoConfigurationTest {
         contextRunner
                 .withUserConfiguration(DataSourceConfig.class, TransactionConfig.class)
                 .run(context -> {
+                    GeneratedReflectors.clear();
                     GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
                         @Override
                         @SuppressWarnings("unchecked")
@@ -114,6 +121,7 @@ class KoraAutoConfigurationTest {
         contextRunner
                 .withUserConfiguration(DataSourceConfig.class)
                 .run(context -> {
+                    GeneratedReflectors.clear();
                     GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
                         @Override
                         @SuppressWarnings("unchecked")
@@ -133,7 +141,7 @@ class KoraAutoConfigurationTest {
                         statement.execute("insert into tx_demo(id, name) values (1, 'a'), (2, 'b')");
                     }
 
-                    QueryWrapper<TxRow> oneQuery = Wrapper.<TxRow>query()
+                    QueryWrapper oneQuery = Wrapper.<TxRow>query()
                             .selectAll()
                             .from(TxRowTable.TX_DEMO)
                             .orderBy(order -> order.asc(TxRowTable.TX_DEMO.id))
@@ -142,17 +150,65 @@ class KoraAutoConfigurationTest {
                     TxRow one = Sql.of(oneQuery).one(TxRow.class);
                     assertEquals(1L, one.getId());
 
-                    QueryWrapper<TxRow> pageQuery = Wrapper.<TxRow>query()
+                    QueryWrapper pageQuery = Wrapper.<TxRow>query()
                             .selectAll()
                             .from(TxRowTable.TX_DEMO)
                             .orderBy(order -> order.asc(TxRowTable.TX_DEMO.id));
                     Paging paging = new Paging();
-                    paging.setIndex(1);
+                    paging.setCurrent(1);
                     paging.setSize(1);
                     Page<TxRow> page = Sql.of(pageQuery).page(paging, TxRow.class);
                     assertEquals(1, page.current());
                     assertEquals(2L, page.total());
                     assertEquals(1, page.records().size());
+                });
+    }
+
+    @Test
+    void shouldRegisterMapperBeansIntoSpringContainer() {
+        contextRunner
+                .withUserConfiguration(DataSourceConfig.class, TestMapperKoraConfig.class)
+                .run(context -> {
+                    DataSource dataSource = context.getBean(DataSource.class);
+                    try (var connection = dataSource.getConnection();
+                         var statement = connection.createStatement()) {
+                        statement.execute("drop table if exists test_user");
+                        statement.execute("create table test_user(id bigint auto_increment primary key, name varchar(32))");
+                        statement.execute("insert into test_user(name) values ('spring-user')");
+                    }
+
+                    TestUserMapper mapper = context.getBean(TestUserMapper.class);
+                    TestUser user = mapper.selectById(1L);
+
+                    assertEquals("spring-user", user.getName());
+                });
+    }
+
+    @Test
+    void shouldRegisterMappersWithSameSimpleNameUsingQualifiedBeanNames() {
+        contextRunner
+                .withUserConfiguration(DataSourceConfig.class, CollisionMapperKoraConfig.class)
+                .run(context -> {
+                    DataSource dataSource = context.getBean(DataSource.class);
+                    try (var connection = dataSource.getConnection();
+                         var statement = connection.createStatement()) {
+                        statement.execute("drop table if exists left_user");
+                        statement.execute("drop table if exists right_user");
+                        statement.execute("create table left_user(id bigint primary key, name varchar(32))");
+                        statement.execute("create table right_user(id bigint primary key, name varchar(32))");
+                        statement.execute("insert into left_user(id, name) values (1, 'left-user')");
+                        statement.execute("insert into right_user(id, name) values (1, 'right-user')");
+                    }
+
+                    var leftMapper = context.getBean(com.nicleo.kora.spring.boot.autoconfigure.collision.left.UserMapper.class);
+                    var rightMapper = context.getBean(com.nicleo.kora.spring.boot.autoconfigure.collision.right.UserMapper.class);
+                    var leftBean = context.getBean("com.nicleo.kora.spring.boot.autoconfigure.collision.left.UserMapper");
+                    var rightBean = context.getBean("com.nicleo.kora.spring.boot.autoconfigure.collision.right.UserMapper");
+
+                    assertTrue(leftBean instanceof com.nicleo.kora.spring.boot.autoconfigure.collision.left.UserMapper);
+                    assertTrue(rightBean instanceof com.nicleo.kora.spring.boot.autoconfigure.collision.right.UserMapper);
+                    assertEquals("left-user", leftMapper.selectById(1L).getName());
+                    assertEquals("right-user", rightMapper.selectById(1L).getName());
                 });
     }
 

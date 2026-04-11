@@ -9,7 +9,9 @@ import com.example.simple.entity.User;
 import com.nicleo.kora.core.query.Page;
 import com.nicleo.kora.core.query.Paging;
 
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 public interface UserMapper extends ReadMapper<User>, WriteMapper<User> {
     User selectById(Long id);
@@ -21,6 +23,16 @@ public interface UserMapper extends ReadMapper<User>, WriteMapper<User> {
     List<UserSummary> selectSummaries(UserQuery query);
 
     List<User> selectByNestedFilter(UserFilter filter);
+
+    long selectUserCount();
+
+    BigDecimal selectMaxAgeDecimal();
+
+    List<BigDecimal> selectAgeDecimals();
+
+    Map<String, Object> selectUserAsMap(Long id);
+
+    List<Map<String, Object>> selectUserMaps();
 
     Page<User> selectPage(Paging paging, Integer minAge, Integer maxAge);
 }

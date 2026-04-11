@@ -19,9 +19,20 @@ import com.nicleo.kora.core.runtime.TypeConverter;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.ResultSetMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
+import java.time.OffsetTime;
+import java.time.ZonedDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -106,8 +117,7 @@ public class DefaultSqlSession implements SqlSession {
         if (cached != null) {
             return cached;
         }
-        GeneratedReflector<T> reflector = GeneratedReflectors.get(resultType);
-        List<T> loaded = executeQuery(request.getSql(), request.getArgs(), new GeneratedRowMapper<>(resultType, reflector, typeConverter));
+        List<T> loaded = executeQuery(request.getSql(), request.getArgs(), createRowMapper(resultType));
         localCache.put(cacheKey, loaded);
         return loaded;
     }
@@ -173,6 +183,31 @@ public class DefaultSqlSession implements SqlSession {
     }
 
     @Override
+    public Object updateAndReturnGeneratedKey(String sql, Object[] args) {
+        return updateAndReturnGeneratedKey(sql, args, SqlExecutionContext.update(this));
+    }
+
+    public Object updateAndReturnGeneratedKey(String sql, Object[] args, SqlExecutionContext context) {
+        SqlRequest request = applyInterceptors(context, new SqlRequest(sql, args));
+        try (PreparedStatement statement = currentConnection().prepareStatement(request.getSql(), Statement.RETURN_GENERATED_KEYS)) {
+            bindParameters(statement, request.getArgs());
+            int updated = statement.executeUpdate();
+            clearCache();
+            if (updated < 1) {
+                return null;
+            }
+            try (ResultSet generatedKeys = statement.getGeneratedKeys()) {
+                if (generatedKeys.next()) {
+                    return generatedKeys.getObject(1);
+                }
+            }
+            return null;
+        } catch (SQLException ex) {
+            throw new SqlSessionException("Failed to execute update with generated key: " + request.getSql(), ex);
+        }
+    }
+
+    @Override
     public int[] executeBatch(String sql, List<Object[]> batchArgs) {
         return executeBatch(sql, batchArgs, SqlExecutionContext.update(this));
     }
@@ -217,6 +252,73 @@ public class DefaultSqlSession implements SqlSession {
         } catch (SQLException ex) {
             throw new SqlSessionException("Failed to execute query: " + sql, ex);
         }
+    }
+
+    private <T> RowMapper<T> createRowMapper(Class<T> resultType) {
+        if (Map.class.isAssignableFrom(resultType)) {
+            return resultSet -> resultType.cast(readRowAsMap(resultSet));
+        }
+        if (isSimpleResultType(resultType)) {
+            return resultSet -> {
+                Object converted = typeConverter.cast(resultSet.getObject(1), resultType);
+                if (converted == null) {
+                    return null;
+                }
+                @SuppressWarnings("unchecked")
+                T value = (T) converted;
+                return value;
+            };
+        }
+        GeneratedReflector<T> reflector = GeneratedReflectors.get(resultType);
+        return new GeneratedRowMapper<>(resultType, reflector, typeConverter);
+    }
+
+    private Map<String, Object> readRowAsMap(ResultSet resultSet) throws SQLException {
+        ResultSetMetaData metaData = resultSet.getMetaData();
+        Map<String, Object> row = new LinkedHashMap<>();
+        for (int columnIndex = 1; columnIndex <= metaData.getColumnCount(); columnIndex++) {
+            row.put(metaData.getColumnLabel(columnIndex), resultSet.getObject(columnIndex));
+        }
+        return row;
+    }
+
+    private boolean isSimpleResultType(Class<?> resultType) {
+        Class<?> normalized = wrap(resultType);
+        return normalized.isPrimitive()
+                || normalized == String.class
+                || normalized == Boolean.class
+                || normalized == Character.class
+                || Number.class.isAssignableFrom(normalized)
+                || normalized == BigDecimal.class
+                || normalized == BigInteger.class
+                || normalized == UUID.class
+                || normalized == LocalDate.class
+                || normalized == LocalDateTime.class
+                || normalized == LocalTime.class
+                || normalized == Instant.class
+                || normalized == OffsetDateTime.class
+                || normalized == OffsetTime.class
+                || normalized == ZonedDateTime.class
+                || normalized == Object.class
+                || normalized.isEnum()
+                || normalized == byte[].class;
+    }
+
+    private Class<?> wrap(Class<?> type) {
+        if (!type.isPrimitive()) {
+            return type;
+        }
+        return switch (type.getName()) {
+            case "boolean" -> Boolean.class;
+            case "byte" -> Byte.class;
+            case "short" -> Short.class;
+            case "int" -> Integer.class;
+            case "long" -> Long.class;
+            case "float" -> Float.class;
+            case "double" -> Double.class;
+            case "char" -> Character.class;
+            default -> type;
+        };
     }
 
     @Override

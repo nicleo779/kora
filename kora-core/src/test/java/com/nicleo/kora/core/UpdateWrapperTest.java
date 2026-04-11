@@ -26,7 +26,7 @@ class UpdateWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "update users set name = IF(users.age >= ?, ?, ?) WHERE users.id = ?",
+                "update `users` set `name` = IF(`users`.`age` >= ?, ?, ?) WHERE `users`.`id` = ?",
                 request.getSql());
         assertArrayEquals(new Object[]{18, "adult", "minor", 1L}, request.getArgs());
     }

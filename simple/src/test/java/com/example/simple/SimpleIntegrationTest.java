@@ -31,11 +31,13 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -68,12 +70,12 @@ class SimpleIntegrationTest {
 
     @Test
     void generatedMapperAndMetaShouldWork() {
-        assertEquals("users", UserTable.USERS.tableName());
-        assertEquals("id", UserTable.USERS.id.columnName());
-        assertEquals("name", UserTable.USERS.name.columnName());
-        assertEquals("age", UserTable.USERS.age.columnName());
-        assertEquals("login_name", UserTable.USERS.userName.columnName());
-        assertEquals(IdStrategy.CUSTOM, UserTable.USERS.idStrategy());
+        assertEquals("users", UserTable.TABLE.tableName());
+        assertEquals("id", UserTable.TABLE.id.columnName());
+        assertEquals("name", UserTable.TABLE.name.columnName());
+        assertEquals("age", UserTable.TABLE.age.columnName());
+        assertEquals("login_name", UserTable.TABLE.userName.columnName());
+        assertEquals(IdStrategy.CUSTOM, UserTable.TABLE.idStrategy());
         User alice = userMapper.selectById(1L);
         assertNotNull(alice);
         assertEquals(1L, alice.getId());
@@ -92,6 +94,16 @@ class SimpleIntegrationTest {
         assertEquals("Bob", summaries.get(0).getName());
         assertEquals("bob_02", summaries.get(0).getUserName());
 
+        assertEquals(3L, userMapper.selectUserCount());
+        assertEquals(new BigDecimal("30.00"), userMapper.selectMaxAgeDecimal());
+        assertEquals(List.of(new BigDecimal("18.00"), new BigDecimal("25.00"), new BigDecimal("30.00")), userMapper.selectAgeDecimals());
+        Map<String, Object> userMap = userMapper.selectUserAsMap(1L);
+        assertEquals(1L, ((Number) userMap.get("ID")).longValue());
+        assertEquals("Alice", userMap.get("NAME"));
+        List<Map<String, Object>> userMaps = userMapper.selectUserMaps();
+        assertEquals(3, userMaps.size());
+        assertEquals("Bob", userMaps.get(1).get("NAME"));
+
         List<User> nested = userMapper.selectByNestedFilter(new UserFilter(new AgeRange(20, 30)));
         assertEquals(List.of("Bob", "Cindy"), nested.stream().map(User::getName).toList());
 
@@ -103,15 +115,15 @@ class SimpleIntegrationTest {
         List<User> wrapped = userMapper.selectList(
                 Wrapper.<User>where()
                         .where(where -> where
-                                .ge(minAge != null, UserTable.USERS.age, minAge)
-                                .le(maxAge != null, UserTable.USERS.age, maxAge))
-                        .orderBy(order -> order.asc(UserTable.USERS.id))
+                                .ge(minAge != null, UserTable.TABLE.age, minAge)
+                                .le(maxAge != null, UserTable.TABLE.age, maxAge))
+                        .orderBy(order -> order.asc(UserTable.TABLE.id))
         );
         assertEquals(List.of("Bob", "Cindy"), wrapped.stream().map(User::getName).toList());
 
         User wrappedOne = userMapper.selectOne(
                 Wrapper.<User>where()
-                        .where(where -> where.eq(UserTable.USERS.id, 2L))
+                        .where(where -> where.eq(UserTable.TABLE.id, 2L))
                         .limit(1)
         );
         assertNotNull(wrappedOne);
@@ -119,8 +131,13 @@ class SimpleIntegrationTest {
 
         BaseMapper<User> baseMapper = (ReadMapper<User>) userMapper;
 
-        int updated = baseMapper.insert(new User(null, "Dylan", 27,"zhansan"));
+        assertEquals(3L, baseMapper.count(Wrapper.<User>where()
+                .where(where -> where.ge(UserTable.TABLE.age, 18))));
+
+        User insertUser = new User(null, "Dylan", 27,"zhansan");
+        int updated = baseMapper.insert(insertUser);
         assertEquals(1, updated);
+        assertEquals(4L, insertUser.getId());
         assertEquals(4, userMapper.selectByAgeRange(null, null).size());
         assertEquals("zhansan", userMapper.selectById(4L).getUserName());
         User selectedByCapability = baseMapper.selectById(1L);
@@ -132,27 +149,29 @@ class SimpleIntegrationTest {
         assertEquals(List.of("Alicia", "Cindy"), selectedByIds.stream().map(User::getName).toList());
 
         Paging paging = new Paging();
-        paging.setIndex(1);
+        paging.setCurrent(1);
         paging.setSize(2);
         Page<User> page = baseMapper.page(
                 paging,
                 Wrapper.<User>where()
-                        .orderBy(order -> order.asc(UserTable.USERS.id))
+                        .orderBy(order -> order.asc(UserTable.TABLE.id))
         );
         assertEquals(1, page.current());
         assertEquals(4L, page.total());
         assertEquals(List.of("Alicia", "Bob"), page.records().stream().map(User::getName).toList());
 
         Paging xmlPaging = new Paging();
-        xmlPaging.setIndex(2);
+        xmlPaging.setCurrent(2);
         xmlPaging.setSize(2);
         Page<User> xmlPage = userMapper.selectPage(xmlPaging, 18, 30);
         assertEquals(2, xmlPage.current());
         assertEquals(4L, xmlPage.total());
         assertEquals(List.of("Cindy", "Dylan"), xmlPage.records().stream().map(User::getName).toList());
 
-        int insertedByBase = baseMapper.insert(new User(null, "Ethan", 31, "ethan_05"));
+        User ethan = new User(null, "Ethan", 31, "ethan_05");
+        int insertedByBase = baseMapper.insert(ethan);
         assertEquals(1, insertedByBase);
+        assertEquals(5L, ethan.getId());
         assertEquals("Ethan", userMapper.selectById(5L).getName());
 
         User updateTarget = new User(5L, "EthanX", null, null);
@@ -160,12 +179,28 @@ class SimpleIntegrationTest {
         assertEquals("EthanX", userMapper.selectById(5L).getName());
 
         assertEquals(1, baseMapper.update(
-                Wrapper.<User>update()
-                        .set(UserTable.USERS.name, "Bobby")
-                        .where(where -> where.eq(UserTable.USERS.id, 2L))
+                Wrapper.update()
+                        .set(UserTable.TABLE.name, "Bobby")
+                        .where(where -> where.eq(UserTable.TABLE.id, 2L))
                         .limit(1)
         ));
         assertEquals("Bobby", userMapper.selectById(2L).getName());
+
+        assertEquals(1, baseMapper.update(
+                Wrapper.update()
+                        .setIncrBy(UserTable.TABLE.age, 2)
+                        .where(where -> where.eq(UserTable.TABLE.id, 2L))
+                        .limit(1)
+        ));
+        assertEquals(27, userMapper.selectById(2L).getAge());
+
+        assertEquals(1, baseMapper.update(
+                Wrapper.<User>update()
+                        .setDecrBy(UserTable.TABLE.age, 5)
+                        .where(where -> where.eq(UserTable.TABLE.id, 2L))
+                        .limit(1)
+        ));
+        assertEquals(22, userMapper.selectById(2L).getAge());
 
         assertEquals(1, baseMapper.deleteById(5L));
         assertEquals(4, userMapper.selectByAgeRange(null, null).size());
@@ -186,7 +221,7 @@ class SimpleIntegrationTest {
 
         assertEquals(2, baseMapper.delete(
                 Wrapper.<User>where()
-                        .where(where -> where.in(UserTable.USERS.id, List.of(6L, 7L)))
+                        .where(where -> where.in(UserTable.TABLE.id, List.of(6L, 7L)))
         ));
         assertEquals(4, userMapper.selectByAgeRange(null, null).size());
     }
@@ -199,7 +234,9 @@ class SimpleIntegrationTest {
         assertNotNull(alice);
         assertEquals("Alice", alice.getName());
 
-        assertEquals(1, plainUserMapper.insert(new User(null, "Henry", 29, "henry_08")));
+        User henry = new User(null, "Henry", 29, "henry_08");
+        assertEquals(1, plainUserMapper.insert(henry));
+        assertEquals(4L, henry.getId());
         assertEquals("Henry", plainUserMapper.selectById(4L).getName());
     }
 
@@ -218,7 +255,6 @@ class SimpleIntegrationTest {
         assertNotNull(user);
         assertEquals(1, contexts.size());
         assertEquals("com.example.simple.mapper.UserMapper", contexts.get(0).getMapperClassName());
-        assertEquals("selectById", contexts.get(0).getMapperMethodName());
         assertEquals("selectById", contexts.get(0).getStatementId());
         assertEquals(User.class, contexts.get(0).getResultType());
     }
@@ -274,9 +310,19 @@ class SimpleIntegrationTest {
         assertEquals(25, queryReflector.get(query, "maxAge"));
         assertNotNull(summaryReflector.getField("userName"));
         assertTrue(summaryReflector.hasField("name"));
-        assertThrows(UnsupportedOperationException.class, rangeReflector::newInstance);
-        assertThrows(UnsupportedOperationException.class, filterReflector::newInstance);
-        assertThrows(UnsupportedOperationException.class, queryReflector::newInstance);
+        AgeRange emptyRange = rangeReflector.newInstance();
+        assertNotNull(emptyRange);
+        assertEquals(null, rangeReflector.get(emptyRange, "minAge"));
+        assertEquals(null, rangeReflector.get(emptyRange, "maxAge"));
+
+        UserFilter emptyFilter = filterReflector.newInstance();
+        assertNotNull(emptyFilter);
+        assertEquals(null, filterReflector.get(emptyFilter, "range"));
+
+        UserQuery emptyQuery = queryReflector.newInstance();
+        assertNotNull(emptyQuery);
+        assertEquals(null, queryReflector.get(emptyQuery, "minAge"));
+        assertEquals(null, queryReflector.get(emptyQuery, "maxAge"));
         UserSummary summary = summaryReflector.newInstance();
         summaryReflector.set(summary, "name", "Demo");
         assertEquals("Demo", summary.getName());

@@ -9,6 +9,11 @@ public interface SqlSession extends AutoCloseable {
 
     int update(String sql, Object[] args);
 
+    default Object updateAndReturnGeneratedKey(String sql, Object[] args) {
+        update(sql, args);
+        return null;
+    }
+
     int[] executeBatch(String sql, List<Object[]> batchArgs);
 
     TypeConverter getTypeConverter();

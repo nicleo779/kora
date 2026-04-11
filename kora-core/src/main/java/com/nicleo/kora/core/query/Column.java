@@ -1,6 +1,7 @@
 package com.nicleo.kora.core.query;
 
 import com.nicleo.kora.core.runtime.DbType;
+import com.nicleo.kora.core.runtime.dialect.SqlDialects;
 
 import java.util.List;
 
@@ -31,8 +32,12 @@ public final class Column<T, V> implements SqlExpression {
         return table.qualifier() + "." + columnName;
     }
 
+    public String expression(DbType dbType) {
+        return SqlDialects.identifiers(dbType).columnReference(table.qualifier(), columnName);
+    }
+
     @Override
     public void appendTo(StringBuilder sql, List<Object> args, DbType dbType) {
-        sql.append(expression());
+        sql.append(expression(dbType));
     }
 }

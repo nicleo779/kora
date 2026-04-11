@@ -16,6 +16,22 @@ public final class OrderBuilder {
         return this;
     }
 
+    public OrderBuilder asc(NamedSqlExpression expression) {
+        return asc(expression.aliasRef());
+    }
+
+    public OrderBuilder desc(NamedSqlExpression expression) {
+        return desc(expression.aliasRef());
+    }
+
+    public OrderBuilder ascAlias(String alias) {
+        return asc(Expressions.aliasRef(alias));
+    }
+
+    public OrderBuilder descAlias(String alias) {
+        return desc(Expressions.aliasRef(alias));
+    }
+
     List<Order> build() {
         return List.copyOf(orders);
     }

@@ -8,81 +8,110 @@ public final class Conditions {
     }
 
     public static Condition eq(SqlExpression left, Object value) {
-        return valueCondition(left, "=", value);
+        return new ConditionNodes.ValueCondition(left, "=", value);
+    }
+
+    public static Condition eqAlias(String alias, Object value) {
+        return eq(Expressions.aliasRef(alias), value);
     }
 
     public static Condition ne(SqlExpression left, Object value) {
-        return valueCondition(left, "<>", value);
+        return new ConditionNodes.ValueCondition(left, "<>", value);
+    }
+
+    public static Condition neAlias(String alias, Object value) {
+        return ne(Expressions.aliasRef(alias), value);
     }
 
     public static Condition gt(SqlExpression left, Object value) {
-        return valueCondition(left, ">", value);
+        return new ConditionNodes.ValueCondition(left, ">", value);
+    }
+
+    public static Condition gtAlias(String alias, Object value) {
+        return gt(Expressions.aliasRef(alias), value);
     }
 
     public static Condition ge(SqlExpression left, Object value) {
-        return valueCondition(left, ">=", value);
+        return new ConditionNodes.ValueCondition(left, ">=", value);
+    }
+
+    public static Condition geAlias(String alias, Object value) {
+        return ge(Expressions.aliasRef(alias), value);
     }
 
     public static Condition lt(SqlExpression left, Object value) {
-        return valueCondition(left, "<", value);
+        return new ConditionNodes.ValueCondition(left, "<", value);
+    }
+
+    public static Condition ltAlias(String alias, Object value) {
+        return lt(Expressions.aliasRef(alias), value);
     }
 
     public static Condition le(SqlExpression left, Object value) {
-        return valueCondition(left, "<=", value);
+        return new ConditionNodes.ValueCondition(left, "<=", value);
+    }
+
+    public static Condition leAlias(String alias, Object value) {
+        return le(Expressions.aliasRef(alias), value);
     }
 
     public static Condition like(SqlExpression left, String value) {
-        return valueCondition(left, "LIKE", value);
+        return new ConditionNodes.ValueCondition(left, "LIKE", value);
+    }
+
+    public static Condition likeAlias(String alias, String value) {
+        return like(Expressions.aliasRef(alias), value);
     }
 
     public static Condition isNull(SqlExpression expression) {
-        return (sql, args, dbType) -> {
-            expression.appendTo(sql, args, dbType);
-            sql.append(" IS NULL");
-        };
+        return new ConditionNodes.NullCondition(expression, false);
     }
 
     public static Condition isNotNull(SqlExpression expression) {
-        return (sql, args, dbType) -> {
-            expression.appendTo(sql, args, dbType);
-            sql.append(" IS NOT NULL");
-        };
+        return new ConditionNodes.NullCondition(expression, true);
     }
 
     public static Condition in(SqlExpression expression, Iterable<?> values) {
-        return iterableCondition(expression, "IN", values, false);
+        return new ConditionNodes.InCondition(expression, "IN", values, false);
     }
 
     public static Condition notIn(SqlExpression expression, Iterable<?> values) {
-        return iterableCondition(expression, "NOT IN", values, true);
+        return new ConditionNodes.InCondition(expression, "NOT IN", values, true);
     }
 
     public static Condition between(SqlExpression expression, Object start, Object end) {
-        return (sql, args, dbType) -> {
-            expression.appendTo(sql, args, dbType);
-            sql.append(" BETWEEN ? AND ?");
-            args.add(start);
-            args.add(end);
-        };
+        return new ConditionNodes.BetweenCondition(expression, start, end);
     }
 
     public static Condition eq(SqlExpression left, SqlExpression right) {
-        return (sql, args, dbType) -> {
-            left.appendTo(sql, args, dbType);
-            sql.append(" = ");
-            right.appendTo(sql, args, dbType);
-        };
+        return new ConditionNodes.ExpressionCondition(left, "=", right);
+    }
+
+    public static Condition ne(SqlExpression left, SqlExpression right) {
+        return new ConditionNodes.ExpressionCondition(left, "<>", right);
+    }
+
+    public static Condition gt(SqlExpression left, SqlExpression right) {
+        return new ConditionNodes.ExpressionCondition(left, ">", right);
+    }
+
+    public static Condition ge(SqlExpression left, SqlExpression right) {
+        return new ConditionNodes.ExpressionCondition(left, ">=", right);
+    }
+
+    public static Condition lt(SqlExpression left, SqlExpression right) {
+        return new ConditionNodes.ExpressionCondition(left, "<", right);
+    }
+
+    public static Condition le(SqlExpression left, SqlExpression right) {
+        return new ConditionNodes.ExpressionCondition(left, "<=", right);
     }
 
     public static Condition group(Condition condition) {
         if (condition == null) {
             return null;
         }
-        return (sql, args, dbType) -> {
-            sql.append('(');
-            condition.appendTo(sql, args, dbType);
-            sql.append(')');
-        };
+        return new ConditionNodes.GroupCondition(condition);
     }
 
     public static Condition and(Condition... conditions) {
@@ -97,42 +126,7 @@ public final class Conditions {
         if (condition == null) {
             return null;
         }
-        return (sql, args, dbType) -> {
-            sql.append("NOT (");
-            condition.appendTo(sql, args, dbType);
-            sql.append(')');
-        };
-    }
-
-    private static Condition valueCondition(SqlExpression left, String operator, Object value) {
-        return (sql, args, dbType) -> {
-            left.appendTo(sql, args, dbType);
-            sql.append(' ').append(operator).append(" ?");
-            args.add(value);
-        };
-    }
-
-    private static Condition iterableCondition(SqlExpression expression, String operator, Iterable<?> values, boolean whenEmptyAlwaysTrue) {
-        List<Object> items = new ArrayList<>();
-        for (Object value : values) {
-            items.add(value);
-        }
-        return (sql, args, dbType) -> {
-            if (items.isEmpty()) {
-                sql.append(whenEmptyAlwaysTrue ? "1 = 1" : "1 = 0");
-                return;
-            }
-            expression.appendTo(sql, args, dbType);
-            sql.append(' ').append(operator).append(" (");
-            for (int i = 0; i < items.size(); i++) {
-                if (i > 0) {
-                    sql.append(", ");
-                }
-                sql.append('?');
-                args.add(items.get(i));
-            }
-            sql.append(')');
-        };
+        return new ConditionNodes.NotCondition(condition);
     }
 
     private static Condition combine(String operator, Condition... conditions) {
@@ -148,15 +142,6 @@ public final class Conditions {
         if (filtered.size() == 1) {
             return filtered.get(0);
         }
-        return (sql, args, dbType) -> {
-            sql.append('(');
-            for (int i = 0; i < filtered.size(); i++) {
-                if (i > 0) {
-                    sql.append(' ').append(operator).append(' ');
-                }
-                filtered.get(i).appendTo(sql, args, dbType);
-            }
-            sql.append(')');
-        };
+        return new ConditionNodes.CompositeCondition(operator, List.copyOf(filtered));
     }
 }

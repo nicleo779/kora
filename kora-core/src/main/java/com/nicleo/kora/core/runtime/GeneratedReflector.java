@@ -13,8 +13,13 @@ public interface GeneratedReflector<T> {
 
     Object get(T target, String property);
 
+    default String[] fieldNamesView() {
+        return getFields();
+    }
+
     default String[] getFields() {
-        return new String[0];
+        String[] names = fieldNamesView();
+        return names.length == 0 ? names : names.clone();
     }
 
     default boolean hasField(String field) {

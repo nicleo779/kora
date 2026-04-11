@@ -61,6 +61,34 @@
         order by id
     </select>
 
+    <select id="selectUserCount">
+        select count(*)
+        from users
+    </select>
+
+    <select id="selectMaxAgeDecimal">
+        select cast(max(age) as decimal(10, 2))
+        from users
+    </select>
+
+    <select id="selectAgeDecimals">
+        select cast(age as decimal(10, 2))
+        from users
+        order by id
+    </select>
+
+    <select id="selectUserAsMap">
+        select id, name, age, login_name
+        from users
+        where id = #{id}
+    </select>
+
+    <select id="selectUserMaps">
+        select id, name, age, login_name
+        from users
+        order by id
+    </select>
+
     <select id="selectPage">
         select id, name, age, login_name
         from users

@@ -2,6 +2,8 @@ package com.nicleo.kora.core.query;
 
 import com.nicleo.kora.core.annotation.IdStrategy;
 import com.nicleo.kora.core.runtime.IdGenerator;
+import com.nicleo.kora.core.runtime.DbType;
+import com.nicleo.kora.core.runtime.dialect.SqlDialects;
 
 public abstract class EntityTable<T> {
     private final Class<T> entityType;
@@ -30,16 +32,24 @@ public abstract class EntityTable<T> {
         return alias;
     }
 
-    public final String tableReference() {
-        return alias == null || alias.isBlank() ? tableName : tableName + " " + alias;
+    public final String tableReference(DbType dbType) {
+        return SqlDialects.identifiers(dbType).tableReference(tableName, alias);
     }
 
     public final String qualifier() {
         return alias == null || alias.isBlank() ? tableName : alias;
     }
 
+    public final String qualifier(DbType dbType) {
+        return SqlDialects.identifiers(dbType).quote(qualifier());
+    }
+
     protected final <V> Column<T, V> column(String columnName, Class<V> javaType) {
         return new Column<>(this, columnName, javaType);
+    }
+
+    public final Column<T, Object> columnRef(String columnName) {
+        return new Column<>(this, columnName, Object.class);
     }
 
     public IdStrategy idStrategy() {

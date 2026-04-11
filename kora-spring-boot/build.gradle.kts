@@ -23,6 +23,8 @@ dependencies {
     testImplementation("com.h2database:h2:2.2.224")
     testImplementation("org.springframework.boot:spring-boot-starter-test:3.3.2")
     testImplementation("org.springframework.boot:spring-boot-autoconfigure:3.3.2")
+    testCompileOnly(project(":kora-processor"))
+    testAnnotationProcessor(project(":kora-processor"))
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
