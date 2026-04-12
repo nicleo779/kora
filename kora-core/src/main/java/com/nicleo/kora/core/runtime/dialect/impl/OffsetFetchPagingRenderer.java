@@ -1,6 +1,6 @@
 package com.nicleo.kora.core.runtime.dialect.impl;
 
-import com.nicleo.kora.core.runtime.SqlSessionException;
+import com.nicleo.kora.core.runtime.SqlExecutorException;
 import com.nicleo.kora.core.runtime.dialect.PageClause;
 import com.nicleo.kora.core.runtime.dialect.PagingRenderer;
 import com.nicleo.kora.core.runtime.dialect.RenderContext;
@@ -12,7 +12,7 @@ public final class OffsetFetchPagingRenderer implements PagingRenderer {
             return;
         }
         if (pageClause.forDataMutation()) {
-            throw new SqlSessionException("Dialect " + context.dialect().id() + " does not support LIMIT on update/delete");
+            throw new SqlExecutorException("Dialect " + context.dialect().id() + " does not support LIMIT on update/delete");
         }
         if (context.dialect().capabilities().requiresOrderByForOffsetFetch()
                 && context.sql().indexOf(" ORDER BY ") < 0) {

@@ -5,6 +5,8 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+
+import com.nicleo.kora.core.runtime.*;
 import org.junit.jupiter.api.Test;
 
 import com.nicleo.kora.core.query.Column;
@@ -16,14 +18,6 @@ import com.nicleo.kora.core.query.Page;
 import com.nicleo.kora.core.query.Paging;
 import com.nicleo.kora.core.query.QueryWrapper;
 import com.nicleo.kora.core.query.Wrapper;
-import com.nicleo.kora.core.runtime.DbType;
-import com.nicleo.kora.core.runtime.DefaultSqlGenerator;
-import com.nicleo.kora.core.runtime.DefaultSqlPagingSupport;
-import com.nicleo.kora.core.runtime.SqlRequest;
-import com.nicleo.kora.core.runtime.SqlSession;
-import com.nicleo.kora.core.runtime.SqlSessionException;
-import com.nicleo.kora.core.runtime.TypeConverter;
-import com.nicleo.kora.core.runtime.RowMapper;
 
 class QueryWrapperTest {
     private final DefaultSqlGenerator sqlGenerator = new DefaultSqlGenerator();
@@ -480,7 +474,7 @@ class QueryWrapperTest {
 
     @Test
     void queryWrapperShouldExecuteWithBoundSqlSession() {
-        RecordingSqlSession sqlSession = new RecordingSqlSession();
+        RecordingSqlExecutor sqlSession = new RecordingSqlExecutor();
         TestUserTable users = TestUserTable.USERS;
 
         QueryWrapper query = Wrapper.query(sqlSession)
@@ -508,23 +502,23 @@ class QueryWrapperTest {
                 .from(users)
                 .where(users.ID.eq(1L));
 
-        assertThrows(SqlSessionException.class, () -> query.one(TestUser.class));
-        assertThrows(SqlSessionException.class, query::count);
+        assertThrows(SqlExecutorException.class, () -> query.one(TestUser.class));
+        assertThrows(SqlExecutorException.class, query::count);
     }
 
     private static final class TestUser {
     }
 
-    private static final class RecordingSqlSession implements SqlSession {
+    private static final class RecordingSqlExecutor implements SqlExecutor {
         private final DefaultSqlGenerator sqlGenerator = new DefaultSqlGenerator();
         private final com.nicleo.kora.core.runtime.SqlPagingSupport sqlPagingSupport = new com.nicleo.kora.core.runtime.SqlPagingSupport() {
             @Override
-            public <T> Page<T> page(SqlSession sqlSession, com.nicleo.kora.core.runtime.SqlExecutionContext context, String sql, Object[] args, Paging paging, Class<T> elementType) {
+            public <T> Page<T> page(SqlExecutor sqlExecutor, com.nicleo.kora.core.runtime.SqlExecutionContext context, String sql, Object[] args, Paging paging, Class<T> elementType) {
                 return new Page<>(paging.getCurrent(), paging.getSize(), 3L, listResult.stream().map(elementType::cast).toList());
             }
 
             @Override
-            public long count(SqlSession sqlSession, com.nicleo.kora.core.runtime.SqlExecutionContext context, String sql, Object[] args) {
+            public long count(SqlExecutor sqlExecutor, com.nicleo.kora.core.runtime.SqlExecutionContext context, String sql, Object[] args) {
                 return 3L;
             }
         };
@@ -548,6 +542,11 @@ class QueryWrapperTest {
         }
 
         @Override
+        public Object updateAndReturnGeneratedKey(String sql, Object[] args) {
+            return null;
+        }
+
+        @Override
         public int[] executeBatch(String sql, List<Object[]> batchArgs) {
             throw new UnsupportedOperationException();
         }
@@ -559,6 +558,36 @@ class QueryWrapperTest {
 
         @Override
         public void setTypeConverter(TypeConverter typeConverter) {
+        }
+
+        @Override
+        public IdGenerator getIdGenerator() {
+            return null;
+        }
+
+        @Override
+        public void setIdGenerator(IdGenerator idGenerator) {
+
+        }
+
+        @Override
+        public <T> T selectOne(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
+            return null;
+        }
+
+        @Override
+        public <T> List<T> selectList(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
+            return List.of();
+        }
+
+        @Override
+        public int update(String sql, Object[] args, SqlExecutionContext context) {
+            return 0;
+        }
+
+        @Override
+        public int[] executeBatch(String sql, List<Object[]> batchArgs, SqlExecutionContext context) {
+            return new int[0];
         }
 
         @Override

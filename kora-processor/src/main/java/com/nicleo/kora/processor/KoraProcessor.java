@@ -64,7 +64,7 @@ import java.util.stream.Stream;
 @SupportedOptions("kora.projectDir")
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 public class KoraProcessor extends AbstractProcessor {
-    static final String SQL_SESSION = "com.nicleo.kora.core.runtime.SqlSession";
+    static final String SQL_EXECUTOR = "com.nicleo.kora.core.runtime.SqlExecutor";
     private static final String LIST_TYPE = "java.util.List";
     private static final String PAGE_TYPE = "com.nicleo.kora.core.query.Page";
     private static final String PAGING_TYPE = "com.nicleo.kora.core.query.Paging";
@@ -1073,26 +1073,26 @@ public class KoraProcessor extends AbstractProcessor {
                     throw new ProcessorException("Page<T> select method must declare a Paging parameter: " + mapperType.getQualifiedName() + "." + method.getSimpleName());
                 }
                 return "        return " + renderTypeCast(returnType,
-                        "sqlSession.getSqlPagingSupport().page(sqlSession, context, sql, args, " + pagingName + ", " + classLiteral(elementType) + ")") + ";\n";
+                        "sqlExecutor.getSqlPagingSupport().page(sqlExecutor, context, sql, args, " + pagingName + ", " + classLiteral(elementType) + ")") + ";\n";
             }
             if (isListReturn(returnType)) {
                 TypeMirror elementType = extractListElementType(returnType);
                 ensureReflectorIfNeeded(elementType);
                 return "        return " + renderTypeCast(returnType,
-                        "sqlSession.selectList(sql, args, context, " + classLiteral(elementType) + ")") + ";\n";
+                        "sqlExecutor.selectList(sql, args, context, " + classLiteral(elementType) + ")") + ";\n";
             }
             if (returnType.getKind() == TypeKind.VOID) {
                 throw new ProcessorException("Select method cannot return void: " + mapperType.getQualifiedName() + "." + method.getSimpleName());
             }
             ensureReflectorIfNeeded(returnType);
             return "        return " + renderTypeCast(returnType,
-                    "sqlSession.selectOne(sql, args, context, " + classLiteral(returnType) + ")") + ";\n";
+                    "sqlExecutor.selectOne(sql, args, context, " + classLiteral(returnType) + ")") + ";\n";
         }
         if (returnType.getKind() == TypeKind.INT) {
-            return "        return sqlSession.update(sql, args, context);\n";
+            return "        return sqlExecutor.update(sql, args, context);\n";
         }
         if (returnType.getKind() == TypeKind.VOID) {
-            return "        sqlSession.update(sql, args, context);\n        return;\n";
+            return "        sqlExecutor.update(sql, args, context);\n        return;\n";
         }
         throw new ProcessorException("Non-select method must return int or void: " + mapperType.getQualifiedName() + "." + method.getSimpleName());
     }
@@ -1461,8 +1461,8 @@ public class KoraProcessor extends AbstractProcessor {
     private String renderCapabilityInstantiation(TypeElement implType, DeclaredType interfaceType) {
         CapabilityConstructorMode constructorMode = capabilityConstructorMode(implType);
         String implTypeName = implType.getQualifiedName().toString();
-        if (constructorMode == CapabilityConstructorMode.SQL_SESSION) {
-            return "new " + implTypeName + "(sqlSession)";
+        if (constructorMode == CapabilityConstructorMode.SQL_EXECUTOR) {
+            return "new " + implTypeName + "(sqlExecutor)";
         }
         if (interfaceType.getTypeArguments().isEmpty()) {
             throw new ProcessorException("Mapper capability " + interfaceType + " must declare an entity type argument");
@@ -1472,7 +1472,7 @@ public class KoraProcessor extends AbstractProcessor {
         if (entityTypeElement == null) {
             throw new ProcessorException("Mapper capability entity type must be a class: " + interfaceType);
         }
-        return "new " + implTypeName + "(sqlSession, " + tableConstantReference(entityTypeElement) + ")";
+        return "new " + implTypeName + "(sqlExecutor, " + tableConstantReference(entityTypeElement) + ")";
     }
 
     private CapabilityConstructorMode capabilityConstructorMode(TypeElement implType) {
@@ -1482,16 +1482,16 @@ public class KoraProcessor extends AbstractProcessor {
             }
             ExecutableElement constructor = (ExecutableElement) enclosedElement;
             List<? extends VariableElement> parameters = constructor.getParameters();
-            if (parameters.size() == 1 && parameters.getFirst().asType().toString().equals(SQL_SESSION)) {
-                return CapabilityConstructorMode.SQL_SESSION;
+            if (parameters.size() == 1 && parameters.getFirst().asType().toString().equals(SQL_EXECUTOR)) {
+                return CapabilityConstructorMode.SQL_EXECUTOR;
             }
             if (parameters.size() == 2
-                    && parameters.getFirst().asType().toString().equals(SQL_SESSION)
+                    && parameters.getFirst().asType().toString().equals(SQL_EXECUTOR)
                     && types.erasure(parameters.get(1).asType()).toString().equals("com.nicleo.kora.core.query.EntityTable")) {
-                return CapabilityConstructorMode.SQL_SESSION_AND_ENTITY_TABLE;
+                return CapabilityConstructorMode.SQL_EXECUTOR_AND_ENTITY_TABLE;
             }
         }
-        throw new ProcessorException("Mapper capability impl must declare constructor (SqlSession) or (SqlSession, EntityTable<?>): " + implType.getQualifiedName());
+        throw new ProcessorException("Mapper capability impl must declare constructor (SqlExecutor) or (SqlExecutor, EntityTable<?>): " + implType.getQualifiedName());
     }
 
     private String tableConstantReference(TypeElement entityType) {
@@ -2172,8 +2172,8 @@ public class KoraProcessor extends AbstractProcessor {
     }
 
     private enum CapabilityConstructorMode {
-        SQL_SESSION,
-        SQL_SESSION_AND_ENTITY_TABLE
+        SQL_EXECUTOR,
+        SQL_EXECUTOR_AND_ENTITY_TABLE
     }
 
     static final class ScanSpec {

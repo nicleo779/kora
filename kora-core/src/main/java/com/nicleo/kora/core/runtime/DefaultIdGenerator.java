@@ -1,6 +1,5 @@
 package com.nicleo.kora.core.runtime;
 
-import com.nicleo.kora.core.annotation.IdStrategy;
 import com.nicleo.kora.core.query.EntityTable;
 
 import java.util.UUID;
@@ -12,11 +11,11 @@ public final class DefaultIdGenerator implements IdGenerator {
     }
 
     @Override
-    public Object generate(SqlSession sqlSession, EntityTable<?> entityTable, Object entity) {
+    public Object generate(SqlExecutor sqlExecutor, EntityTable<?> entityTable, Object entity) {
         return switch (entityTable.idStrategy()) {
             case NONE -> null;
             case UUID -> generateUuid(entityTable);
-            case CUSTOM -> generateCustom(sqlSession, entityTable, entity);
+            case CUSTOM -> generateCustom(sqlExecutor, entityTable, entity);
         };
     }
 
@@ -29,19 +28,19 @@ public final class DefaultIdGenerator implements IdGenerator {
         if (javaType == String.class) {
             return uuid.toString();
         }
-        throw new SqlSessionException("UUID id strategy only supports String or UUID fields: "
+        throw new SqlExecutorException("UUID id strategy only supports String or UUID fields: "
                 + entityTable.entityType().getName() + "." + entityTable.fieldName(entityTable.idColumn().columnName()));
     }
 
-    private Object generateCustom(SqlSession sqlSession, EntityTable<?> entityTable, Object entity) {
+    private Object generateCustom(SqlExecutor sqlExecutor, EntityTable<?> entityTable, Object entity) {
         IdGenerator generator = entityTable.idGenerator();
         if (generator != null) {
-            return generator.generate(sqlSession, entityTable, entity);
+            return generator.generate(sqlExecutor, entityTable, entity);
         }
-        IdGenerator sessionGenerator = sqlSession.getIdGenerator();
-        if (sessionGenerator != null) {
-            return sessionGenerator.generate(sqlSession, entityTable, entity);
+        IdGenerator executorGenerator = sqlExecutor.getIdGenerator();
+        if (executorGenerator != null) {
+            return executorGenerator.generate(sqlExecutor, entityTable, entity);
         }
-        throw new SqlSessionException("No custom id generator configured for entity: " + entityTable.entityType().getName());
+        throw new SqlExecutorException("No custom id generator configured for entity: " + entityTable.entityType().getName());
     }
 }

@@ -33,7 +33,7 @@ public final class TypeConverter {
         Class<?> normalizedTargetType = wrap(targetType);
         if (value == null) {
             if (normalizedTargetType != targetType || targetType.isPrimitive()) {
-                throw new SqlSessionException("Cannot assign null to primitive type " + targetType.getName());
+                throw new SqlExecutorException("Cannot assign null to primitive type " + targetType.getName());
             }
             return null;
         }

@@ -17,10 +17,10 @@ public interface SqlGenerator {
     SqlRequest renderUpdate(EntityTable<?> table, UpdateDefinition updateDefinition, DbType dbType);
 
     default SqlRequest renderInsert(EntityTable<?> table, List<String> columns, List<Object> args, DbType dbType) {
-        throw new SqlSessionException("Insert render is not supported by generator: " + getClass().getName());
+        throw new SqlExecutorException("Insert render is not supported by generator: " + getClass().getName());
     }
 
     default SqlRequest rewriteCount(QueryDefinition definition, DbType dbType) {
-        throw new SqlSessionException("Count rewrite is not supported by generator: " + getClass().getName());
+        throw new SqlExecutorException("Count rewrite is not supported by generator: " + getClass().getName());
     }
 }

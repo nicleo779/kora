@@ -1,6 +1,6 @@
 package com.nicleo.kora.core.query;
 
-import com.nicleo.kora.core.runtime.SqlSessionException;
+import com.nicleo.kora.core.runtime.SqlExecutorException;
 
 import java.util.Map;
 import java.util.Objects;
@@ -20,7 +20,7 @@ public final class Tables {
     public static <T> EntityTable<T> get(Class<T> entityType) {
         EntityTable<?> table = REGISTRY.get(Objects.requireNonNull(entityType, "entityType"));
         if (table == null) {
-            throw new SqlSessionException("No EntityTable registered for type: " + entityType.getName());
+            throw new SqlExecutorException("No EntityTable registered for type: " + entityType.getName());
         }
         return (EntityTable<T>) table;
     }

@@ -56,7 +56,7 @@ class GeneratedReflectorsTest {
 
     @Test
     void shouldThrowWhenTypeIsUnknown() {
-        assertThrows(SqlSessionException.class, () -> GeneratedReflectors.get(Alpha.class));
+        assertThrows(SqlExecutorException.class, () -> GeneratedReflectors.get(Alpha.class));
     }
 
     @SuppressWarnings("unchecked")

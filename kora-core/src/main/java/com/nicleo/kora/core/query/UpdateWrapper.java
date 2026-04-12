@@ -1,6 +1,6 @@
 package com.nicleo.kora.core.query;
 
-import com.nicleo.kora.core.runtime.SqlSessionException;
+import com.nicleo.kora.core.runtime.SqlExecutorException;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -62,7 +62,7 @@ public final class UpdateWrapper {
 
     public UpdateDefinition toDefinition() {
         if (assignments.isEmpty()) {
-            throw new SqlSessionException("UpdateWrapper requires at least one set(...) clause");
+            throw new SqlExecutorException("UpdateWrapper requires at least one set(...) clause");
         }
         return new UpdateDefinition(List.copyOf(assignments), whereWrapper.toDefinition());
     }

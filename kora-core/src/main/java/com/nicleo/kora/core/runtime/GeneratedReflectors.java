@@ -39,7 +39,7 @@ public final class GeneratedReflectors {
                 return reflector;
             }
         }
-        throw new SqlSessionException("No GeneratedReflector resolver installed for type: " + type.getName());
+        throw new SqlExecutorException("No GeneratedReflector resolver installed for type: " + type.getName());
     }
 
     @SuppressWarnings("unchecked")
@@ -53,7 +53,7 @@ public final class GeneratedReflectors {
         default <T> GeneratedReflector<T> resolveOrNull(Class<T> type) {
             try {
                 return get(type);
-            } catch (IllegalArgumentException | SqlSessionException ex) {
+            } catch (IllegalArgumentException | SqlExecutorException ex) {
                 return null;
             }
         }

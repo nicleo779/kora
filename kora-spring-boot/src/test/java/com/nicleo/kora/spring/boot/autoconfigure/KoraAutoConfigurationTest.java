@@ -6,20 +6,17 @@ import com.nicleo.kora.core.runtime.GeneratedReflector;
 import com.nicleo.kora.core.runtime.GeneratedReflectors;
 import com.nicleo.kora.core.runtime.SqlInterceptor;
 import com.nicleo.kora.core.runtime.SqlPagingSupport;
-import com.nicleo.kora.core.runtime.SqlSession;
-import com.nicleo.kora.core.runtime.SqlSessionFactory;
+import com.nicleo.kora.core.runtime.SqlExecutor;
 import com.nicleo.kora.core.query.Page;
 import com.nicleo.kora.core.query.Paging;
 import com.nicleo.kora.core.query.QueryWrapper;
 import com.nicleo.kora.core.query.Tables;
 import com.nicleo.kora.core.query.Wrapper;
-import com.nicleo.kora.core.annotation.KoraScan;
 import com.nicleo.kora.spring.boot.autoconfigure.collision.CollisionMapperKoraConfig;
 import com.nicleo.kora.spring.boot.autoconfigure.mapper.TestUser;
 import com.nicleo.kora.spring.boot.autoconfigure.mapper.TestMapperKoraConfig;
 import com.nicleo.kora.spring.boot.autoconfigure.mapper.TestUserMapper;
-import com.nicleo.kora.spring.boot.CurrentSqlSessionProvider;
-import com.nicleo.kora.spring.boot.SpringTransactionSqlSession;
+import com.nicleo.kora.spring.boot.SpringTransactionSqlExecutor;
 import com.nicleo.kora.spring.boot.Sql;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -34,7 +31,6 @@ import javax.sql.DataSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -45,19 +41,15 @@ class KoraAutoConfigurationTest {
             .withConfiguration(AutoConfigurations.of(KoraAutoConfiguration.class));
 
     @Test
-    void shouldAutoConfigureSqlSessionFromDataSource() {
+    void shouldAutoConfigureSqlExecutorFromDataSource() {
         contextRunner
                 .withUserConfiguration(DataSourceConfig.class)
                 .run(context -> {
-                    SqlSession first = context.getBean(SqlSession.class);
-                    SqlSession second = context.getBean(SqlSession.class);
-                    SqlSessionFactory factory = context.getBean(SqlSessionFactory.class);
-                    SqlSession third = factory.openSession();
-                    assertInstanceOf(SpringTransactionSqlSession.class, first);
-                    assertNotSame(first, second);
-                    assertNotSame(first, third);
+                    SqlExecutor first = context.getBean(SqlExecutor.class);
+                    SqlExecutor second = context.getBean(SqlExecutor.class);
+                    assertInstanceOf(SpringTransactionSqlExecutor.class, first);
+                    assertSame(first, second);
                     assertInstanceOf(DefaultSqlPagingSupport.class, context.getBean(SqlPagingSupport.class));
-                    third.close();
                 });
     }
 
@@ -66,12 +58,10 @@ class KoraAutoConfigurationTest {
         contextRunner
                 .withUserConfiguration(DataSourceConfig.class, CustomBeansConfig.class)
                 .run(context -> {
-                    SqlSessionFactory factory = context.getBean(SqlSessionFactory.class);
-                    SpringTransactionSqlSession sqlSession = (SpringTransactionSqlSession) factory.openSession();
+                    SpringTransactionSqlExecutor sqlSession = context.getBean(SpringTransactionSqlExecutor.class);
                     SqlPagingSupport pagingSupport = context.getBean(SqlPagingSupport.class);
                     assertSame(pagingSupport, sqlSession.getSqlPagingSupport());
                     assertSame(context.getBean("testInterceptor"), sqlSession.getInterceptors().getFirst());
-                    sqlSession.close();
                 });
     }
 
@@ -100,22 +90,18 @@ class KoraAutoConfigurationTest {
                     }
 
                     TransactionTemplate template = context.getBean(TransactionTemplate.class);
-                    SqlSessionFactory factory = context.getBean(SqlSessionFactory.class);
+                    SqlExecutor sqlExecutor = context.getBean(SqlExecutor.class);
 
                     try {
                         template.executeWithoutResult(status -> {
-                            try (SqlSession session = factory.openSession()) {
-                                session.update("insert into tx_demo(id, name) values(?, ?)", new Object[]{1L, "demo"});
-                            }
+                            sqlExecutor.update("insert into tx_demo(id, name) values(?, ?)", new Object[]{1L, "demo"});
                             throw new RuntimeException("rollback");
                         });
                     } catch (RuntimeException ignored) {
                     }
 
-                    try (SqlSession session = factory.openSession()) {
-                        TxRow row = session.selectOne("select id, name from tx_demo where id = ?", new Object[]{1L}, TxRow.class);
-                        assertNull(row);
-                    }
+                    TxRow row = sqlExecutor.selectOne("select id, name from tx_demo where id = ?", new Object[]{1L}, TxRow.class);
+                    assertNull(row);
                 });
     }
 
@@ -241,35 +227,6 @@ class KoraAutoConfigurationTest {
                             .one(TxRow.class);
 
                     assertEquals(1L, one.getId());
-                });
-    }
-
-    @Test
-    void shouldNotCloseReusedCurrentSqlSession() {
-        var query = Wrapper.query()
-                .selectAll()
-                .from(TxRowTable.TX_DEMO)
-                .limit(1);
-
-        TrackingSqlSession sqlSession = new TrackingSqlSession();
-        Sql.bind(() -> new CurrentSqlSessionProvider.SessionHandle(sqlSession, false));
-        try {
-            assertThrows(com.nicleo.kora.core.runtime.SqlSessionException.class, () -> Sql.query().selectAll().from(TxRowTable.TX_DEMO).one(TxRow.class));
-            assertEquals(0, sqlSession.closeCount);
-        } finally {
-            Sql.clear();
-        }
-    }
-
-    @Test
-    void shouldClearStaticSqlBindingWhenContextCloses() {
-        contextRunner
-                .withUserConfiguration(DataSourceConfig.class)
-                .run(context -> {
-                    assertThrows(com.nicleo.kora.core.runtime.SqlSessionException.class, () -> {
-                        context.close();
-                        Sql.query();
-                    });
                 });
     }
 
@@ -496,49 +453,6 @@ class KoraAutoConfigurationTest {
                 case "name" -> new FieldInfo("name", String.class, 0, null, new java.lang.annotation.Annotation[0]);
                 default -> null;
             };
-        }
-    }
-
-    static final class TrackingSqlSession implements SqlSession {
-        int closeCount;
-
-        @Override
-        public <T> T selectOne(String sql, Object[] args, Class<T> resultType) {
-            throw new com.nicleo.kora.core.runtime.SqlSessionException("test");
-        }
-
-        @Override
-        public <T> java.util.List<T> selectList(String sql, Object[] args, Class<T> resultType) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public int update(String sql, Object[] args) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public int[] executeBatch(String sql, java.util.List<Object[]> batchArgs) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public com.nicleo.kora.core.runtime.TypeConverter getTypeConverter() {
-            return new com.nicleo.kora.core.runtime.TypeConverter();
-        }
-
-        @Override
-        public void setTypeConverter(com.nicleo.kora.core.runtime.TypeConverter typeConverter) {
-        }
-
-        @Override
-        public <T> java.util.List<T> executeQuery(String sql, Object[] args, com.nicleo.kora.core.runtime.RowMapper<T> rowMapper) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void close() {
-            closeCount++;
         }
     }
 }

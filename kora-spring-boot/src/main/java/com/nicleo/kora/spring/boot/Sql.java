@@ -2,8 +2,8 @@ package com.nicleo.kora.spring.boot;
 
 import com.nicleo.kora.core.mapper.BaseMapperImpl;
 import com.nicleo.kora.core.query.*;
-import com.nicleo.kora.core.runtime.SqlSession;
-import com.nicleo.kora.core.runtime.SqlSessionException;
+import com.nicleo.kora.core.runtime.SqlExecutor;
+import com.nicleo.kora.core.runtime.SqlExecutorException;
 
 import java.io.Serializable;
 import java.util.Collection;
@@ -11,29 +11,22 @@ import java.util.List;
 import java.util.function.Function;
 
 public final class Sql {
-    private static volatile CurrentSqlSessionProvider currentSqlSessionProvider;
+    private static volatile SqlExecutor sqlExecutor;
 
     private Sql() {
     }
 
-    public static CurrentSqlSessionProvider bind(CurrentSqlSessionProvider currentSqlSessionProvider) {
-        Sql.currentSqlSessionProvider = currentSqlSessionProvider;
-        return currentSqlSessionProvider;
+    public static SqlExecutor bind(SqlExecutor sqlExecutor) {
+        Sql.sqlExecutor = sqlExecutor;
+        return sqlExecutor;
     }
 
     public static void clear() {
-        Sql.currentSqlSessionProvider = null;
+        Sql.sqlExecutor = null;
     }
 
     public static QueryWrapper query() {
-        CurrentSqlSessionProvider provider = currentSqlSessionProvider;
-        if (provider == null) {
-            throw new SqlSessionException("CurrentSqlSessionProvider is not bound. Did you enable kora-spring-boot auto-configuration?");
-        }
-        return new QueryWrapper(() -> {
-            CurrentSqlSessionProvider.SessionHandle handle = provider.currentOrOpen();
-            return new QueryWrapper.SessionHandle(handle.sqlSession(), handle.closeRequired());
-        });
+        return new QueryWrapper(sqlExecutor);
     }
 
     public static <T> QueryWrapper from(EntityTable<T> table) {
@@ -90,7 +83,7 @@ public final class Sql {
 
     private static <T, R> R withEntityMapper(T entity, Function<BaseMapperImpl<T>, R> action) {
         if (entity == null) {
-            throw new SqlSessionException("Entity must not be null");
+            throw new SqlExecutorException("Entity must not be null");
         }
         @SuppressWarnings("unchecked")
         Class<T> entityType = (Class<T>) entity.getClass();
@@ -102,19 +95,7 @@ public final class Sql {
     }
 
     private static <T, R> R withTableMapper(EntityTable<T> table, Function<BaseMapperImpl<T>, R> action) {
-        CurrentSqlSessionProvider provider = currentSqlSessionProvider;
-        if (provider == null) {
-            throw new SqlSessionException("CurrentSqlSessionProvider is not bound. Did you enable kora-spring-boot auto-configuration?");
-        }
-        CurrentSqlSessionProvider.SessionHandle handle = provider.currentOrOpen();
-        SqlSession sqlSession = handle.sqlSession();
-        try {
-            BaseMapperImpl<T> mapper = new BaseMapperImpl<>(sqlSession, table);
-            return action.apply(mapper);
-        } finally {
-            if (handle.closeRequired()) {
-                sqlSession.close();
-            }
-        }
+        BaseMapperImpl<T> mapper = new BaseMapperImpl<>(sqlExecutor, table);
+        return action.apply(mapper);
     }
 }

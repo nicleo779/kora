@@ -5,10 +5,10 @@ import com.nicleo.kora.core.query.EntityTable;
 public abstract class AbstractMapper<T> {
     protected final EntityTable<T> entityTable;
     protected final Class<T> entityClass;
-    protected final SqlSession sqlSession;
+    protected final SqlExecutor sqlExecutor;
 
-    protected AbstractMapper(SqlSession sqlSession, EntityTable<T> entityTable) {
-        this.sqlSession = sqlSession;
+    protected AbstractMapper(SqlExecutor sqlExecutor, EntityTable<T> entityTable) {
+        this.sqlExecutor = sqlExecutor;
         this.entityTable = entityTable;
         this.entityClass = entityTable.entityType();
     }

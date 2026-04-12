@@ -2,7 +2,7 @@ package com.nicleo.kora.core.dynamic;
 
 import com.nicleo.kora.core.runtime.GeneratedReflector;
 import com.nicleo.kora.core.runtime.GeneratedReflectors;
-import com.nicleo.kora.core.runtime.SqlSessionException;
+import com.nicleo.kora.core.runtime.SqlExecutorException;
 
 import java.util.Map;
 
@@ -59,7 +59,7 @@ public final class PropertyAccess {
             GeneratedReflector reflector = GeneratedReflectors.get((Class) target.getClass());
             return reflector.get(target, property);
         } catch (RuntimeException ex) {
-            throw new SqlSessionException("Failed to resolve property '" + property + "' on type " + target.getClass().getName(), ex);
+            throw new SqlExecutorException("Failed to resolve property '" + property + "' on type " + target.getClass().getName(), ex);
         }
     }
 

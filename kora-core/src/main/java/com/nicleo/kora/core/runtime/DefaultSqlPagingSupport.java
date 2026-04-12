@@ -2,38 +2,34 @@ package com.nicleo.kora.core.runtime;
 
 import com.nicleo.kora.core.query.Page;
 import com.nicleo.kora.core.query.Paging;
-import com.nicleo.kora.core.runtime.jdbc.DefaultSqlSession;
 
 import java.util.List;
 
 public class DefaultSqlPagingSupport implements SqlPagingSupport {
     @Override
-    public <T> Page<T> page(SqlSession sqlSession, SqlExecutionContext context, String sql, Object[] args, Paging paging, Class<T> elementType) {
+    public <T> Page<T> page(SqlExecutor sqlExecutor, SqlExecutionContext context, String sql, Object[] args, Paging paging, Class<T> elementType) {
         int current = paging == null || paging.getCurrent() == null || paging.getCurrent() < 1 ? 1 : paging.getCurrent();
         int size = paging == null || paging.getSize() == null || paging.getSize() < 1 ? 10 : paging.getSize();
-        long total = count(sqlSession, context, sql, args);
+        long total = count(sqlExecutor, context, sql, args);
         if (total == 0L) {
             return new Page<>(current, size, 0L, List.of());
         }
         long offset = (current - 1L) * size;
-        SqlRequest pageRequest = buildPageRequest(sqlSession, sql, args, size, offset);
-        List<T> records = sqlSession.selectList(pageRequest.getSql(), pageRequest.getArgs(), context, elementType);
+        SqlRequest pageRequest = buildPageRequest(sqlExecutor, sql, args, size, offset);
+        List<T> records = sqlExecutor.selectList(pageRequest.getSql(), pageRequest.getArgs(), context, elementType);
         return new Page<>(current, size, total, records);
     }
 
     @Override
-    public long count(SqlSession sqlSession, SqlExecutionContext context, String sql, Object[] args) {
+    public long count(SqlExecutor sqlExecutor, SqlExecutionContext context, String sql, Object[] args) {
         if (context != null && context.getCountRequest() != null) {
-            return executeCountRequest(sqlSession, context.getCountRequest());
+            return executeCountRequest(sqlExecutor, context.getCountRequest());
         }
-        return executeCount(sqlSession, sql, args);
+        return executeCount(sqlExecutor, sql, args);
     }
 
-    long executeCountRequest(SqlSession sqlSession, SqlRequest countRequest) {
-        if (!(sqlSession instanceof DefaultSqlSession defaultSqlSession)) {
-            throw new SqlSessionException("Paging requires DefaultSqlSession for count query support");
-        }
-        List<Long> totals = defaultSqlSession.executeQuery(
+    long executeCountRequest(SqlExecutor sqlExecutor, SqlRequest countRequest) {
+        List<Long> totals = sqlExecutor.executeQuery(
                 countRequest.getSql(),
                 countRequest.getArgs(),
                 resultSet -> resultSet.getLong(1)
@@ -41,19 +37,16 @@ public class DefaultSqlPagingSupport implements SqlPagingSupport {
         return totals.isEmpty() ? 0L : totals.getFirst();
     }
 
-    long executeCount(SqlSession sqlSession, String sql, Object[] args) {
-        if (!(sqlSession instanceof DefaultSqlSession defaultSqlSession)) {
-            throw new SqlSessionException("Paging requires DefaultSqlSession for count query support");
-        }
+    long executeCount(SqlExecutor sqlExecutor, String sql, Object[] args) {
         String countSql = buildCountSql(sql);
         Object[] countArgs = trimArgsForCount(countSql, args);
-        List<Long> totals = defaultSqlSession.executeQuery(countSql, countArgs, resultSet -> resultSet.getLong(1));
+        List<Long> totals = sqlExecutor.executeQuery(countSql, countArgs, resultSet -> resultSet.getLong(1));
         return totals.isEmpty() ? 0L : totals.getFirst();
     }
 
-    SqlRequest buildPageRequest(SqlSession sqlSession, String sql, Object[] args, long size, long offset) {
-        if (sqlSession.getSqlGenerator() instanceof DefaultSqlGenerator defaultSqlGenerator) {
-            return defaultSqlGenerator.appendPaging(sql, args, sqlSession.getDbType(), false, Math.toIntExact(size), Math.toIntExact(offset));
+    SqlRequest buildPageRequest(SqlExecutor sqlExecutor, String sql, Object[] args, long size, long offset) {
+        if (sqlExecutor.getSqlGenerator() instanceof DefaultSqlGenerator defaultSqlGenerator) {
+            return defaultSqlGenerator.appendPaging(sql, args, sqlExecutor.getDbType(), false, Math.toIntExact(size), Math.toIntExact(offset));
         }
         return new SqlRequest(sql + " LIMIT ? OFFSET ?", appendPagingArgs(args, size, offset));
     }

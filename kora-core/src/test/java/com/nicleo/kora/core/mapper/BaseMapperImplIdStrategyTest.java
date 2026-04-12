@@ -3,15 +3,7 @@ package com.nicleo.kora.core.mapper;
 import com.nicleo.kora.core.annotation.IdStrategy;
 import com.nicleo.kora.core.query.Column;
 import com.nicleo.kora.core.query.EntityTable;
-import com.nicleo.kora.core.runtime.FieldInfo;
-import com.nicleo.kora.core.runtime.GeneratedReflector;
-import com.nicleo.kora.core.runtime.GeneratedReflectors;
-import com.nicleo.kora.core.runtime.IdGenerator;
-import com.nicleo.kora.core.runtime.RowMapper;
-import com.nicleo.kora.core.runtime.SqlGenerator;
-import com.nicleo.kora.core.runtime.SqlPagingSupport;
-import com.nicleo.kora.core.runtime.SqlSession;
-import com.nicleo.kora.core.runtime.TypeConverter;
+import com.nicleo.kora.core.runtime.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -33,7 +25,7 @@ class BaseMapperImplIdStrategyTest {
 
     @Test
     void noneStrategyShouldSkipIdAndLeaveDatabaseToHandleIt() {
-        RecordingSqlSession sqlSession = new RecordingSqlSession();
+        RecordingSqlExecutor sqlSession = new RecordingSqlExecutor();
         BaseMapperImpl<ManualIdEntity> mapper = new BaseMapperImpl<>(sqlSession, ManualIdTable.MANUAL_IDS);
         ManualIdEntity entity = new ManualIdEntity(10L, "manual");
 
@@ -45,7 +37,7 @@ class BaseMapperImplIdStrategyTest {
 
     @Test
     void uuidStrategyShouldGenerateAndAssignId() {
-        RecordingSqlSession sqlSession = new RecordingSqlSession();
+        RecordingSqlExecutor sqlSession = new RecordingSqlExecutor();
         BaseMapperImpl<UuidEntity> mapper = new BaseMapperImpl<>(sqlSession, UuidTable.UUIDS);
         UuidEntity entity = new UuidEntity(null, "uuid");
 
@@ -59,7 +51,7 @@ class BaseMapperImplIdStrategyTest {
 
     @Test
     void customStrategyShouldGenerateAndAssignIdsForBatch() {
-        RecordingSqlSession sqlSession = new RecordingSqlSession();
+        RecordingSqlExecutor sqlSession = new RecordingSqlExecutor();
         BaseMapperImpl<CustomEntity> mapper = new BaseMapperImpl<>(sqlSession, CustomTable.CUSTOMS);
         CustomEntity first = new CustomEntity(null, "first");
         CustomEntity second = new CustomEntity(null, "second");
@@ -75,7 +67,7 @@ class BaseMapperImplIdStrategyTest {
 
     @Test
     void customStrategyShouldFallbackToSessionGenerator() {
-        RecordingSqlSession sqlSession = new RecordingSqlSession();
+        RecordingSqlExecutor sqlSession = new RecordingSqlExecutor();
         sqlSession.setIdGenerator(new SessionIdGenerator());
         BaseMapperImpl<SessionCustomEntity> mapper = new BaseMapperImpl<>(sqlSession, SessionCustomTable.SESSION_CUSTOMS);
         SessionCustomEntity entity = new SessionCustomEntity(null, "session");
@@ -88,7 +80,7 @@ class BaseMapperImplIdStrategyTest {
 
     @Test
     void noneStrategyShouldAssignGeneratedKeyBackToEntity() {
-        RecordingSqlSession sqlSession = new RecordingSqlSession();
+        RecordingSqlExecutor sqlSession = new RecordingSqlExecutor();
         sqlSession.generatedKey = 77L;
         BaseMapperImpl<AutoIdEntity> mapper = new BaseMapperImpl<>(sqlSession, AutoIdTable.AUTO_IDS);
         AutoIdEntity entity = new AutoIdEntity(null, "auto");
@@ -99,7 +91,7 @@ class BaseMapperImplIdStrategyTest {
         assertEquals(77L, entity.getId());
     }
 
-    private static final class RecordingSqlSession implements SqlSession {
+    private static final class RecordingSqlExecutor implements SqlExecutor {
         private TypeConverter typeConverter = new TypeConverter();
         private IdGenerator idGenerator;
         private String lastSql;
@@ -162,8 +154,33 @@ class BaseMapperImplIdStrategyTest {
         }
 
         @Override
+        public <T> T selectOne(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
+            return selectOne(sql,args,resultType);
+        }
+
+        @Override
+        public <T> List<T> selectList(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
+            return selectList(sql,args,resultType);
+        }
+
+        @Override
+        public int update(String sql, Object[] args, SqlExecutionContext context) {
+            return update(sql,args);
+        }
+
+        @Override
+        public int[] executeBatch(String sql, List<Object[]> batchArgs, SqlExecutionContext context) {
+            return executeBatch(sql,batchArgs);
+        }
+
+        @Override
         public SqlPagingSupport getSqlPagingSupport() {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public DbType getDbType() {
+            return null;
         }
 
         @Override
@@ -447,7 +464,7 @@ class BaseMapperImplIdStrategyTest {
         private final AtomicLong sequence = new AtomicLong(1000);
 
         @Override
-        public Object generate(SqlSession sqlSession, EntityTable<?> entityTable, Object entity) {
+        public Object generate(SqlExecutor sqlExecutor, EntityTable<?> entityTable, Object entity) {
             return sequence.incrementAndGet();
         }
     }
@@ -456,7 +473,7 @@ class BaseMapperImplIdStrategyTest {
         private final AtomicLong sequence = new AtomicLong(5000);
 
         @Override
-        public Object generate(SqlSession sqlSession, EntityTable<?> entityTable, Object entity) {
+        public Object generate(SqlExecutor sqlExecutor, EntityTable<?> entityTable, Object entity) {
             return sequence.incrementAndGet();
         }
     }

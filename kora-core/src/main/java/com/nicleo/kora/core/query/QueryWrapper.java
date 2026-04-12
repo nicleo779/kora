@@ -1,9 +1,9 @@
 package com.nicleo.kora.core.query;
 
 import com.nicleo.kora.core.runtime.SqlExecutionContext;
+import com.nicleo.kora.core.runtime.SqlExecutor;
 import com.nicleo.kora.core.runtime.SqlRequest;
-import com.nicleo.kora.core.runtime.SqlSession;
-import com.nicleo.kora.core.runtime.SqlSessionException;
+import com.nicleo.kora.core.runtime.SqlExecutorException;
 import com.nicleo.kora.core.xml.SqlCommandType;
 
 import java.util.ArrayList;
@@ -16,27 +16,17 @@ public final class QueryWrapper {
     private final List<JoinSpec> joins = new ArrayList<>();
     private final List<SqlExpression> groupByExpressions = new ArrayList<>();
     private final WhereWrapper whereWrapper = new WhereWrapper();
-    private final SqlSession sqlSession;
-    private final SqlSessionHandleProvider sqlSessionHandleProvider;
+    private final SqlExecutor sqlExecutor;
     private Condition having;
     private EntityTable<?> from;
     private boolean selectAll;
 
     public QueryWrapper() {
-        this(null, null);
+        this(null);
     }
 
-    public QueryWrapper(SqlSession sqlSession) {
-        this(sqlSession, null);
-    }
-
-    public QueryWrapper(SqlSessionHandleProvider sqlSessionHandleProvider) {
-        this(null, sqlSessionHandleProvider);
-    }
-
-    private QueryWrapper(SqlSession sqlSession, SqlSessionHandleProvider sqlSessionHandleProvider) {
-        this.sqlSession = sqlSession;
-        this.sqlSessionHandleProvider = sqlSessionHandleProvider;
+    public QueryWrapper(SqlExecutor sqlExecutor) {
+        this.sqlExecutor = sqlExecutor;
     }
 
     public QueryWrapper select(SqlExpression... expressions) {
@@ -161,7 +151,7 @@ public final class QueryWrapper {
 
     public QueryDefinition toDefinition() {
         if (from == null) {
-            throw new SqlSessionException("QueryWrapper requires from(table) before rendering SQL");
+            throw new SqlExecutorException("QueryWrapper requires from(table) before rendering SQL");
         }
         return new QueryDefinition(
                 List.copyOf(selectExpressions),
@@ -175,97 +165,61 @@ public final class QueryWrapper {
     }
 
     public <T> T one(Class<T> resultType) {
-        SessionHandle handle = requireSqlSessionHandle();
-        SqlSession sqlSession = handle.sqlSession();
-        try {
-            QueryDefinition definition = toDefinition();
-            SqlRequest request = sqlSession.getSqlGenerator().renderQuery(definition, sqlSession.getDbType());
-            return sqlSession.selectOne(request.getSql(), request.getArgs(), resultType);
-        } finally {
-            closeIfNeeded(handle);
-        }
+        var sqlExecutor = requireSqlExecutor();
+        QueryDefinition definition = toDefinition();
+        SqlRequest request = sqlExecutor.getSqlGenerator().renderQuery(definition, sqlExecutor.getDbType());
+        return sqlExecutor.selectOne(request.getSql(), request.getArgs(), resultType);
+
     }
 
     public <T> List<T> list(Class<T> resultType) {
-        SessionHandle handle = requireSqlSessionHandle();
-        SqlSession sqlSession = handle.sqlSession();
-        try {
-            QueryDefinition definition = toDefinition();
-            SqlRequest request = sqlSession.getSqlGenerator().renderQuery(definition, sqlSession.getDbType());
-            return sqlSession.selectList(request.getSql(), request.getArgs(), resultType);
-        } finally {
-            closeIfNeeded(handle);
-        }
+        var sqlExecutor = requireSqlExecutor();
+        QueryDefinition definition = toDefinition();
+        SqlRequest request = sqlExecutor.getSqlGenerator().renderQuery(definition, sqlExecutor.getDbType());
+        return sqlExecutor.selectList(request.getSql(), request.getArgs(), resultType);
     }
 
     public long count() {
-        SessionHandle handle = requireSqlSessionHandle();
-        SqlSession sqlSession = handle.sqlSession();
-        try {
-            QueryDefinition definition = toDefinition();
-            SqlRequest request = sqlSession.getSqlGenerator().renderQuery(definition, sqlSession.getDbType());
-            SqlRequest countRequest = sqlSession.getSqlGenerator().rewriteCount(definition, sqlSession.getDbType());
-            SqlExecutionContext context = new SqlExecutionContext(
-                    sqlSession,
-                    QueryWrapper.class.getName(),
-                    "count",
-                    SqlCommandType.SELECT,
-                    Long.class,
-                    null,
-                    countRequest,
-                    true
-            );
-            return sqlSession.getSqlPagingSupport().count(sqlSession, context, request.getSql(), request.getArgs());
-        } finally {
-            closeIfNeeded(handle);
-        }
+        var sqlExecutor = requireSqlExecutor();
+        QueryDefinition definition = toDefinition();
+        SqlRequest request = sqlExecutor.getSqlGenerator().renderQuery(definition, sqlExecutor.getDbType());
+        SqlRequest countRequest = sqlExecutor.getSqlGenerator().rewriteCount(definition, sqlExecutor.getDbType());
+        SqlExecutionContext context = new SqlExecutionContext(
+                sqlExecutor,
+                QueryWrapper.class.getName(),
+                "count",
+                SqlCommandType.SELECT,
+                Long.class,
+                null,
+                countRequest,
+                true
+        );
+        return sqlExecutor.getSqlPagingSupport().count(sqlExecutor, context, request.getSql(), request.getArgs());
     }
 
     public <T> Page<T> page(Paging paging, Class<T> resultType) {
-        SessionHandle handle = requireSqlSessionHandle();
-        SqlSession sqlSession = handle.sqlSession();
-        try {
-            QueryDefinition definition = toDefinition();
-            SqlRequest request = sqlSession.getSqlGenerator().renderQuery(definition, sqlSession.getDbType());
-            SqlRequest countRequest = sqlSession.getSqlGenerator().rewriteCount(definition, sqlSession.getDbType());
-            SqlExecutionContext context = new SqlExecutionContext(
-                    sqlSession,
-                    QueryWrapper.class.getName(),
-                    "page",
-                    SqlCommandType.SELECT,
-                    resultType,
-                    paging,
-                    countRequest,
-                    true
-            );
-            return sqlSession.getSqlPagingSupport().page(sqlSession, context, request.getSql(), request.getArgs(), paging, resultType);
-        } finally {
-            closeIfNeeded(handle);
-        }
+        var sqlExecutor = requireSqlExecutor();
+        QueryDefinition definition = toDefinition();
+        SqlRequest request = sqlExecutor.getSqlGenerator().renderQuery(definition, sqlExecutor.getDbType());
+        SqlRequest countRequest = sqlExecutor.getSqlGenerator().rewriteCount(definition, sqlExecutor.getDbType());
+        SqlExecutionContext context = new SqlExecutionContext(
+                sqlExecutor,
+                QueryWrapper.class.getName(),
+                "page",
+                SqlCommandType.SELECT,
+                resultType,
+                paging,
+                countRequest,
+                true
+        );
+        return sqlExecutor.getSqlPagingSupport().page(sqlExecutor, context, request.getSql(), request.getArgs(), paging, resultType);
     }
 
-    private SqlSession requireSqlSession() {
-        if (sqlSession == null) {
-            throw new SqlSessionException("QueryWrapper is not bound to a SqlSession. Use new QueryWrapper(sqlSession) or Wrapper.query(sqlSession).");
+    private SqlExecutor requireSqlExecutor() {
+        if (sqlExecutor != null) {
+            return this.sqlExecutor;
         }
-        return sqlSession;
-    }
-
-    private SessionHandle requireSqlSessionHandle() {
-        if (sqlSession != null) {
-            return new SessionHandle(sqlSession, false);
-        }
-        if (sqlSessionHandleProvider != null) {
-            return sqlSessionHandleProvider.currentOrOpen();
-        }
-        throw new SqlSessionException("QueryWrapper is not bound to a SqlSession. Use new QueryWrapper(sqlSession), new QueryWrapper(provider), or Wrapper.query(sqlSession).");
-    }
-
-    private void closeIfNeeded(SessionHandle handle) {
-        if (!handle.closeRequired()) {
-            return;
-        }
-        handle.sqlSession().close();
+        throw new SqlExecutorException("QueryWrapper is not bound to a SqlExecutor. Use new QueryWrapper(sqlExecutor), new QueryWrapper(provider), or Wrapper.query(sqlExecutor).");
     }
 
     private void addJoin(String joinType, EntityTable<?> table, Condition on) {
@@ -298,11 +252,4 @@ public final class QueryWrapper {
     private record JoinSpec(String joinType, EntityTable<?> table, Condition on) {
     }
 
-    @FunctionalInterface
-    public interface SqlSessionHandleProvider {
-        SessionHandle currentOrOpen();
-    }
-
-    public record SessionHandle(SqlSession sqlSession, boolean closeRequired) {
-    }
 }

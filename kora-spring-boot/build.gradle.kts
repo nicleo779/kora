@@ -17,7 +17,8 @@ dependencies {
 
     compileOnly("org.springframework.boot:spring-boot-configuration-processor:3.3.2")
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor:3.3.2")
-
+    compileOnly("org.projectlombok:lombok:1.18.44")
+    annotationProcessor("org.projectlombok:lombok:1.18.44")
     testImplementation(platform("org.junit:junit-bom:5.10.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testImplementation("com.h2database:h2:2.2.224")

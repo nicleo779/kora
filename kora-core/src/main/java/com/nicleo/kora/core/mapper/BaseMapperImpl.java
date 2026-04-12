@@ -17,9 +17,9 @@ import com.nicleo.kora.core.runtime.GeneratedReflector;
 import com.nicleo.kora.core.runtime.GeneratedReflectors;
 import com.nicleo.kora.core.runtime.DefaultIdGenerator;
 import com.nicleo.kora.core.runtime.SqlExecutionContext;
+import com.nicleo.kora.core.runtime.SqlExecutor;
 import com.nicleo.kora.core.runtime.SqlRequest;
-import com.nicleo.kora.core.runtime.SqlSession;
-import com.nicleo.kora.core.runtime.SqlSessionException;
+import com.nicleo.kora.core.runtime.SqlExecutorException;
 import com.nicleo.kora.core.xml.SqlCommandType;
 
 import java.io.Serializable;
@@ -31,8 +31,8 @@ import java.util.List;
 import java.util.Map;
 
 public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T> {
-    public BaseMapperImpl(SqlSession sqlSession, EntityTable<T> entityTable) {
-        super(sqlSession, entityTable);
+    public BaseMapperImpl(SqlExecutor sqlExecutor, EntityTable<T> entityTable) {
+        super(sqlExecutor, entityTable);
     }
 
     @Override
@@ -46,8 +46,8 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
                 null,
                 new WhereDefinition(Conditions.eq(entityTable.idColumn(), id), List.of(), null, null)
         );
-        SqlRequest request = sqlSession.getSqlGenerator().renderQuery(queryDefinition, sqlSession.getDbType());
-        return sqlSession.selectOne(request.getSql(), request.getArgs(), entityClass);
+        SqlRequest request = sqlExecutor.getSqlGenerator().renderQuery(queryDefinition, sqlExecutor.getDbType());
+        return sqlExecutor.selectOne(request.getSql(), request.getArgs(), entityClass);
     }
 
     @Override
@@ -64,27 +64,27 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
                 null,
                 new WhereDefinition(Conditions.in(entityTable.idColumn(), ids), List.of(), null, null)
         );
-        SqlRequest request = sqlSession.getSqlGenerator().renderQuery(queryDefinition, sqlSession.getDbType());
-        return sqlSession.selectList(request.getSql(), request.getArgs(), entityClass);
+        SqlRequest request = sqlExecutor.getSqlGenerator().renderQuery(queryDefinition, sqlExecutor.getDbType());
+        return sqlExecutor.selectList(request.getSql(), request.getArgs(), entityClass);
     }
 
     @Override
     public List<T> selectList(WhereWrapper query) {
-        SqlRequest request = sqlSession.getSqlGenerator().renderSelect(entityTable, query.toDefinition(), sqlSession.getDbType());
-        return sqlSession.selectList(request.getSql(), request.getArgs(), entityClass);
+        SqlRequest request = sqlExecutor.getSqlGenerator().renderSelect(entityTable, query.toDefinition(), sqlExecutor.getDbType());
+        return sqlExecutor.selectList(request.getSql(), request.getArgs(), entityClass);
     }
 
     @Override
     public T selectOne(WhereWrapper query) {
-        SqlRequest request = sqlSession.getSqlGenerator().renderSelect(entityTable, query.toDefinition(), sqlSession.getDbType());
-        return sqlSession.selectOne(request.getSql(), request.getArgs(), entityClass);
+        SqlRequest request = sqlExecutor.getSqlGenerator().renderSelect(entityTable, query.toDefinition(), sqlExecutor.getDbType());
+        return sqlExecutor.selectOne(request.getSql(), request.getArgs(), entityClass);
     }
 
     @Override
     public long count(WhereWrapper query) {
         var whereDefinition = query.toDefinition();
-        SqlRequest request = sqlSession.getSqlGenerator().renderSelect(entityTable, query.toDefinition(), sqlSession.getDbType());
-        SqlRequest countRequest = sqlSession.getSqlGenerator().rewriteCount(
+        SqlRequest request = sqlExecutor.getSqlGenerator().renderSelect(entityTable, query.toDefinition(), sqlExecutor.getDbType());
+        SqlRequest countRequest = sqlExecutor.getSqlGenerator().rewriteCount(
                 new com.nicleo.kora.core.query.QueryDefinition(
                         java.util.List.of(),
                         true,
@@ -94,10 +94,10 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
                         null,
                         whereDefinition
                 ),
-                sqlSession.getDbType()
+                sqlExecutor.getDbType()
         );
         SqlExecutionContext context = new SqlExecutionContext(
-                sqlSession,
+                sqlExecutor,
                 getClass().getName(),
                 "count",
                 SqlCommandType.SELECT,
@@ -106,14 +106,14 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
                 countRequest,
                 true
         );
-        return sqlSession.getSqlPagingSupport().count(sqlSession, context, request.getSql(), request.getArgs());
+        return sqlExecutor.getSqlPagingSupport().count(sqlExecutor, context, request.getSql(), request.getArgs());
     }
 
     @Override
     public Page<T> page(Paging paging, WhereWrapper query) {
         var whereDefinition = query.toDefinition();
-        SqlRequest request = sqlSession.getSqlGenerator().renderSelect(entityTable, whereDefinition, sqlSession.getDbType());
-        SqlRequest countRequest = sqlSession.getSqlGenerator().rewriteCount(
+        SqlRequest request = sqlExecutor.getSqlGenerator().renderSelect(entityTable, whereDefinition, sqlExecutor.getDbType());
+        SqlRequest countRequest = sqlExecutor.getSqlGenerator().rewriteCount(
                 new com.nicleo.kora.core.query.QueryDefinition(
                         java.util.List.of(),
                         true,
@@ -123,10 +123,10 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
                         null,
                         whereDefinition
                 ),
-                sqlSession.getDbType()
+                sqlExecutor.getDbType()
         );
         SqlExecutionContext context = new SqlExecutionContext(
-                sqlSession,
+                sqlExecutor,
                 getClass().getName(),
                 "page",
                 SqlCommandType.SELECT,
@@ -135,18 +135,18 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
                 countRequest,
                 true
         );
-        return sqlSession.getSqlPagingSupport().page(sqlSession, context, request.getSql(), request.getArgs(), paging, entityClass);
+        return sqlExecutor.getSqlPagingSupport().page(sqlExecutor, context, request.getSql(), request.getArgs(), paging, entityClass);
     }
 
     @Override
     public int insert(T entity) {
         InsertSpec spec = buildInsertSpec(entity);
         if (spec.assignGeneratedId()) {
-            Object generatedKey = sqlSession.updateAndReturnGeneratedKey(spec.sql(), spec.args());
+            Object generatedKey = sqlExecutor.updateAndReturnGeneratedKey(spec.sql(), spec.args());
             assignGeneratedId(entity, GeneratedReflectors.get(entityClass), generatedKey);
             return generatedKey == null ? 0 : 1;
         }
-        return sqlSession.update(spec.sql(), spec.args());
+        return sqlExecutor.update(spec.sql(), spec.args());
     }
 
     @Override
@@ -168,7 +168,7 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
         if (spec == null) {
             return 0;
         }
-        return sqlSession.update(spec.sql(), spec.args());
+        return sqlExecutor.update(spec.sql(), spec.args());
     }
 
     @Override
@@ -189,24 +189,24 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
 
     @Override
     public int delete(WhereWrapper query) {
-        SqlRequest request = sqlSession.getSqlGenerator().renderDelete(entityTable, query.toDefinition(), sqlSession.getDbType());
-        return sqlSession.update(request.getSql(), request.getArgs());
+        SqlRequest request = sqlExecutor.getSqlGenerator().renderDelete(entityTable, query.toDefinition(), sqlExecutor.getDbType());
+        return sqlExecutor.update(request.getSql(), request.getArgs());
     }
 
     @Override
     public int update(UpdateWrapper updateWrapper) {
-        SqlRequest request = sqlSession.getSqlGenerator().renderUpdate(entityTable, updateWrapper.toDefinition(), sqlSession.getDbType());
-        return sqlSession.update(request.getSql(), request.getArgs());
+        SqlRequest request = sqlExecutor.getSqlGenerator().renderUpdate(entityTable, updateWrapper.toDefinition(), sqlExecutor.getDbType());
+        return sqlExecutor.update(request.getSql(), request.getArgs());
     }
 
     @Override
     public int deleteById(Serializable id) {
-        SqlRequest request = sqlSession.getSqlGenerator().renderDelete(
+        SqlRequest request = sqlExecutor.getSqlGenerator().renderDelete(
                 entityTable,
                 new WhereDefinition(Conditions.eq(entityTable.idColumn(), id), List.of(), null, null),
-                sqlSession.getDbType()
+                sqlExecutor.getDbType()
         );
-        return sqlSession.update(request.getSql(), request.getArgs());
+        return sqlExecutor.update(request.getSql(), request.getArgs());
     }
 
     @Override
@@ -214,12 +214,12 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
         if (ids == null || ids.isEmpty()) {
             return 0;
         }
-        SqlRequest request = sqlSession.getSqlGenerator().renderDelete(
+        SqlRequest request = sqlExecutor.getSqlGenerator().renderDelete(
                 entityTable,
                 new WhereDefinition(Conditions.in(entityTable.idColumn(), ids), List.of(), null, null),
-                sqlSession.getDbType()
+                sqlExecutor.getDbType()
         );
-        return sqlSession.update(request.getSql(), request.getArgs());
+        return sqlExecutor.update(request.getSql(), request.getArgs());
     }
 
     private boolean isIdField(String field) {
@@ -256,10 +256,10 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
             args.add(value);
         }
         if (columns.isEmpty()) {
-            throw new SqlSessionException("Insert requires at least one non-null field: " + entityClass.getName());
+            throw new SqlExecutorException("Insert requires at least one non-null field: " + entityClass.getName());
         }
         try {
-            SqlRequest request = sqlSession.getSqlGenerator().renderInsert(entityTable, columns, args, sqlSession.getDbType());
+            SqlRequest request = sqlExecutor.getSqlGenerator().renderInsert(entityTable, columns, args, sqlExecutor.getDbType());
             return new InsertSpec(request.getSql(), request.getArgs(), assignGeneratedId);
         } catch (RuntimeException ex) {
             StringBuilder sql = new StringBuilder("insert into ")
@@ -297,20 +297,20 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
         FieldInfo idField = reflector.getField(idFieldName());
         Object converted = generatedKey;
         if (idField != null && idField.type() instanceof Class<?> targetType) {
-            converted = sqlSession.getTypeConverter().cast(generatedKey, targetType);
+            converted = sqlExecutor.getTypeConverter().cast(generatedKey, targetType);
         }
         reflector.set(entity, idFieldName(), converted);
     }
 
     private Object generateId(T entity) {
-        return DefaultIdGenerator.INSTANCE.generate(sqlSession, entityTable, entity);
+        return DefaultIdGenerator.INSTANCE.generate(sqlExecutor, entityTable, entity);
     }
 
     private UpdateByIdSpec buildUpdateByIdSpec(T entity) {
         GeneratedReflector<T> reflector = GeneratedReflectors.get(entityClass);
         Object idValue = reflector.get(entity, idFieldName());
         if (idValue == null) {
-            throw new SqlSessionException("Update by id requires non-null id field: " + entityClass.getName());
+            throw new SqlExecutorException("Update by id requires non-null id field: " + entityClass.getName());
         }
         List<UpdateAssignment> updateAssignments = new ArrayList<>();
         for (String field : reflector.fieldNamesView()) {
@@ -330,13 +330,13 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
             return null;
         }
         try {
-            SqlRequest request = sqlSession.getSqlGenerator().renderUpdate(
+            SqlRequest request = sqlExecutor.getSqlGenerator().renderUpdate(
                     entityTable,
                     new UpdateDefinition(
                             updateAssignments,
                             new WhereDefinition(Conditions.eq(entityTable.idColumn(), idValue), List.of(), null, null)
                     ),
-                    sqlSession.getDbType()
+                    sqlExecutor.getDbType()
             );
             return new UpdateByIdSpec(request.getSql(), request.getArgs());
         } catch (RuntimeException ex) {
@@ -364,7 +364,7 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
     private int executeGroupedBatch(Map<String, List<Object[]>> batchGroups) {
         int total = 0;
         for (Map.Entry<String, List<Object[]>> entry : batchGroups.entrySet()) {
-            int[] results = sqlSession.executeBatch(entry.getKey(), entry.getValue());
+            int[] results = sqlExecutor.executeBatch(entry.getKey(), entry.getValue());
             total += Arrays.stream(results).sum();
         }
         return total;

@@ -79,8 +79,8 @@ final class MapperSourceGenerator {
         return """
                 %spublic final class %s extends com.nicleo.kora.core.runtime.AbstractMapper<%s> implements %s {
 
-                %s%s    public %s(%s sqlSession) {
-                        super(sqlSession, %s);
+                %s%s    public %s(%s sqlExecutor) {
+                        super(sqlExecutor, %s);
                         %s.install();
                 %s    }
 
@@ -93,7 +93,7 @@ final class MapperSourceGenerator {
                 delegateFields,
                 statementFields,
                 generatedSimpleName,
-                KoraProcessor.SQL_SESSION,
+                KoraProcessor.SQL_EXECUTOR,
                 context.tableConstantReference(mapperEntityType),
                 supportClassName,
                 delegateInitializers,
@@ -110,7 +110,7 @@ final class MapperSourceGenerator {
                         java.util.Map<String, Object> params = com.nicleo.kora.core.dynamic.MapperParameters.build(%s, %s);
                         com.nicleo.kora.core.runtime.BoundSql boundSql = com.nicleo.kora.core.dynamic.DynamicSqlRenderer.render(%s, params);
                         com.nicleo.kora.core.runtime.SqlExecutionContext context = new com.nicleo.kora.core.runtime.SqlExecutionContext(
-                                sqlSession,
+                                sqlExecutor,
                                 "%s",
                                 "%s",
                                 com.nicleo.kora.core.xml.SqlCommandType.%s,

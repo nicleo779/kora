@@ -3,12 +3,12 @@ package com.example.simple.common;
 import com.nicleo.kora.core.annotation.MapperCapability;
 import com.nicleo.kora.core.query.EntityTable;
 import com.nicleo.kora.core.runtime.AbstractMapper;
-import com.nicleo.kora.core.runtime.SqlSession;
+import com.nicleo.kora.core.runtime.SqlExecutor;
 
 @MapperCapability(UpdateMapper.class)
 public class UpdateMapperImpl<T> extends AbstractMapper<T> implements UpdateMapper<T> {
-    public UpdateMapperImpl(SqlSession sqlSession, EntityTable<T> entityTable) {
-        super(sqlSession, entityTable);
+    public UpdateMapperImpl(SqlExecutor sqlExecutor, EntityTable<T> entityTable) {
+        super(sqlExecutor, entityTable);
     }
 
     @Override
@@ -16,6 +16,6 @@ public class UpdateMapperImpl<T> extends AbstractMapper<T> implements UpdateMapp
         String sql = "update " + entityTable.tableName()
                 + " set " + entityTable.columnName("name") + " = ? where "
                 + entityTable.idColumn().columnName() + " = ?";
-        return sqlSession.update(sql, new Object[]{name, id});
+        return sqlExecutor.update(sql, new Object[]{name, id});
     }
 }

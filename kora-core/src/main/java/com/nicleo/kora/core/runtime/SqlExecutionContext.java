@@ -6,7 +6,7 @@ import com.nicleo.kora.core.xml.SqlCommandType;
 import java.util.Objects;
 
 public final class SqlExecutionContext {
-    private final SqlSession sqlSession;
+    private final SqlExecutor sqlExecutor;
     private final String mapperClassName;
     private final String statementId;
     private final SqlCommandType commandType;
@@ -15,16 +15,16 @@ public final class SqlExecutionContext {
     private final SqlRequest countRequest;
     private final boolean interceptorEnabled;
 
-    public SqlExecutionContext(SqlSession sqlSession, String mapperClassName, String statementId, SqlCommandType commandType, Class<?> resultType, boolean interceptorEnabled) {
-        this(sqlSession, mapperClassName, statementId, commandType, resultType, null, null, interceptorEnabled);
+    public SqlExecutionContext(SqlExecutor sqlExecutor, String mapperClassName, String statementId, SqlCommandType commandType, Class<?> resultType, boolean interceptorEnabled) {
+        this(sqlExecutor, mapperClassName, statementId, commandType, resultType, null, null, interceptorEnabled);
     }
 
-    public SqlExecutionContext(SqlSession sqlSession, String mapperClassName, String statementId, SqlCommandType commandType, Class<?> resultType, Paging paging, boolean interceptorEnabled) {
-        this(sqlSession, mapperClassName, statementId, commandType, resultType, paging, null, interceptorEnabled);
+    public SqlExecutionContext(SqlExecutor sqlExecutor, String mapperClassName, String statementId, SqlCommandType commandType, Class<?> resultType, Paging paging, boolean interceptorEnabled) {
+        this(sqlExecutor, mapperClassName, statementId, commandType, resultType, paging, null, interceptorEnabled);
     }
 
-    public SqlExecutionContext(SqlSession sqlSession, String mapperClassName, String statementId, SqlCommandType commandType, Class<?> resultType, Paging paging, SqlRequest countRequest, boolean interceptorEnabled) {
-        this.sqlSession = sqlSession;
+    public SqlExecutionContext(SqlExecutor sqlExecutor, String mapperClassName, String statementId, SqlCommandType commandType, Class<?> resultType, Paging paging, SqlRequest countRequest, boolean interceptorEnabled) {
+        this.sqlExecutor = sqlExecutor;
         this.mapperClassName = mapperClassName;
         this.statementId = statementId;
         this.commandType = Objects.requireNonNull(commandType, "commandType");
@@ -34,24 +34,24 @@ public final class SqlExecutionContext {
         this.interceptorEnabled = interceptorEnabled;
     }
 
-    public static SqlExecutionContext select(SqlSession sqlSession, Class<?> resultType) {
-        return new SqlExecutionContext(sqlSession, null, null, SqlCommandType.SELECT, resultType, null, true);
+    public static SqlExecutionContext select(SqlExecutor sqlExecutor, Class<?> resultType) {
+        return new SqlExecutionContext(sqlExecutor, null, null, SqlCommandType.SELECT, resultType, null, true);
     }
 
-    public static SqlExecutionContext update(SqlSession sqlSession) {
-        return new SqlExecutionContext(sqlSession, null, null, SqlCommandType.UPDATE, null, null, true);
+    public static SqlExecutionContext update(SqlExecutor sqlExecutor) {
+        return new SqlExecutionContext(sqlExecutor, null, null, SqlCommandType.UPDATE, null, null, true);
     }
 
-    public SqlExecutionContext withSqlSession(SqlSession sqlSession) {
-        return new SqlExecutionContext(sqlSession, mapperClassName, statementId, commandType, resultType, paging, countRequest, interceptorEnabled);
+    public SqlExecutionContext withSqlExecutor(SqlExecutor sqlExecutor) {
+        return new SqlExecutionContext(sqlExecutor, mapperClassName, statementId, commandType, resultType, paging, countRequest, interceptorEnabled);
     }
 
     public SqlExecutionContext withoutInterceptors() {
-        return new SqlExecutionContext(sqlSession, mapperClassName, statementId, commandType, resultType, paging, countRequest, false);
+        return new SqlExecutionContext(sqlExecutor, mapperClassName, statementId, commandType, resultType, paging, countRequest, false);
     }
 
-    public SqlSession getSqlSession() {
-        return sqlSession;
+    public SqlExecutor getSqlExecutor() {
+        return sqlExecutor;
     }
 
     public String getMapperClassName() {

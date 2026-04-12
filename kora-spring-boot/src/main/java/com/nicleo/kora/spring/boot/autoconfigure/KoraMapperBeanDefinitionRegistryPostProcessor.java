@@ -22,7 +22,7 @@ import org.springframework.util.StringUtils;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
-final class KoraMapperBeanDefinitionRegistryPostProcessor implements BeanDefinitionRegistryPostProcessor,
+public final class KoraMapperBeanDefinitionRegistryPostProcessor implements BeanDefinitionRegistryPostProcessor,
         ResourceLoaderAware, EnvironmentAware, PriorityOrdered {
 
     private ResourceLoader resourceLoader;
@@ -78,10 +78,8 @@ final class KoraMapperBeanDefinitionRegistryPostProcessor implements BeanDefinit
         }
         BeanDefinitionBuilder builder = BeanDefinitionBuilder.genericBeanDefinition(implClassName);
         builder.setScope(BeanDefinition.SCOPE_PROTOTYPE);
-        builder.addConstructorArgReference("sqlSession");
-        BeanDefinitionHolder proxyHolder = org.springframework.aop.scope.ScopedProxyUtils.createScopedProxy(
-                new BeanDefinitionHolder(builder.getBeanDefinition(), beanName), registry, false);
-        registry.registerBeanDefinition(proxyHolder.getBeanName(), proxyHolder.getBeanDefinition());
+        builder.addConstructorArgReference("sqlExecutor");
+        registry.registerBeanDefinition(beanName, builder.getBeanDefinition());
     }
 
     @Override

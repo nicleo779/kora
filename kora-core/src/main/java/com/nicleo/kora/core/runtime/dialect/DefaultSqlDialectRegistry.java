@@ -1,7 +1,7 @@
 package com.nicleo.kora.core.runtime.dialect;
 
 import com.nicleo.kora.core.runtime.DbType;
-import com.nicleo.kora.core.runtime.SqlSessionException;
+import com.nicleo.kora.core.runtime.SqlExecutorException;
 import com.nicleo.kora.core.runtime.dialect.impl.PostgreSqlDialect;
 import com.nicleo.kora.core.runtime.dialect.impl.StandardLimitDialect;
 import com.nicleo.kora.core.runtime.dialect.impl.StandardOffsetFetchDialect;
@@ -21,7 +21,7 @@ public final class DefaultSqlDialectRegistry implements SqlDialectRegistry {
     public SqlDialect require(DbType dbType) {
         SqlDialect dialect = dialects.get(dbType);
         if (dialect == null) {
-            throw new SqlSessionException("No SqlDialect registered for DbType: " + dbType);
+            throw new SqlExecutorException("No SqlDialect registered for DbType: " + dbType);
         }
         return dialect;
     }
