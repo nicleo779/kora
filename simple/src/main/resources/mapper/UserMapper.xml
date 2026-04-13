@@ -1,0 +1,106 @@
+<mapper namespace="com.example.simple.mapper.UserMapper">
+    <select id="selectById">
+        select id, name, age, login_name
+        from users
+        where id = #{id}
+    </select>
+
+    <select id="selectByAgeRange">
+        select id, name, age, login_name
+        from users
+        <where>
+            <if test="minAge != null">
+                age <![CDATA[ >= ]]> #{minAge}
+            </if>
+            <if test="maxAge != null">
+                and age <![CDATA[ <= ]]> #{maxAge}
+            </if>
+        </where>
+        order by id
+    </select>
+
+    <select id="selectByIds">
+        select id, name, age, login_name
+        from users
+        <where>
+            <if test="ids != null">
+                id in
+                <foreach collection="ids" item="id" open="(" close=")" separator=", ">
+                    #{id}
+                </foreach>
+            </if>
+        </where>
+        order by id
+    </select>
+
+    <select id="selectSummaries">
+        select id, name, login_name
+        from users
+        <where>
+            <if test="query.minAge != null">
+                age <![CDATA[ >= ]]> #{query.minAge}
+            </if>
+            <if test="query.maxAge != null">
+                and age <![CDATA[ <= ]]> #{query.maxAge}
+            </if>
+        </where>
+        order by id
+    </select>
+
+    <select id="selectByNestedFilter">
+        select id, name, age, login_name
+        from users
+        <where>
+            <if test="filter.range.minAge != null">
+                age <![CDATA[ >= ]]> #{filter.range.minAge}
+            </if>
+            <if test="filter.range.maxAge != null">
+                and age <![CDATA[ <= ]]> #{filter.range.maxAge}
+            </if>
+        </where>
+        order by id
+    </select>
+
+    <select id="selectUserCount">
+        select count(*)
+        from users
+    </select>
+
+    <select id="selectMaxAgeDecimal">
+        select cast(max(age) as decimal(10, 2))
+        from users
+    </select>
+
+    <select id="selectAgeDecimals">
+        select cast(age as decimal(10, 2))
+        from users
+        order by id
+    </select>
+
+    <select id="selectUserAsMap">
+        select id, name, age, login_name
+        from users
+        where id = #{id}
+    </select>
+
+    <select id="selectUserMaps">
+        select id, name, age, login_name
+        from users
+        order by id
+    </select>
+
+    <select id="selectPage">
+        select id, name, age, login_name
+        from users
+        <where>
+            <if test="minAge != null">
+                age <![CDATA[ >= ]]> #{minAge}
+            </if>
+            <if test="maxAge != null">
+                and age <![CDATA[ <= ]]> #{maxAge}
+            </if>
+        </where>
+        order by id
+    </select>
+
+</mapper>
