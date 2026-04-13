@@ -6,7 +6,6 @@ import com.nicleo.kora.core.runtime.DefaultSqlPagingSupport;
 import com.nicleo.kora.core.runtime.GeneratedReflector;
 import com.nicleo.kora.core.runtime.GeneratedReflectors;
 import com.nicleo.kora.core.runtime.IdGenerator;
-import com.nicleo.kora.core.runtime.ImmutableArrayList;
 import com.nicleo.kora.core.runtime.RowMapper;
 import com.nicleo.kora.core.runtime.SqlExecutionContext;
 import com.nicleo.kora.core.runtime.SqlGenerator;
@@ -237,9 +236,9 @@ public class DefaultSqlExecutor implements SqlExecutor {
                         results.add(rowMapper.mapRow(resultSet));
                     }
                     if (results.isEmpty()) {
-                        return ImmutableArrayList.empty();
+                        return results;
                     }
-                    return ImmutableArrayList.wrap(results.toArray());
+                    return results;
                 }
             }
         } catch (SQLException ex) {

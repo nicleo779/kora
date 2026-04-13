@@ -52,12 +52,11 @@ publishing {
         mavenLocal()
         maven {
             name = "repsy"
-            url = uri("https://repo.repsy.io/${providers.environmentVariable("REPSY_USERNAME")}/public")
+            url = uri("https://repo.repsy.io/${providers.environmentVariable("REPSY_USERNAME").orElse("").get()}/public")
             credentials {
                 username = providers.gradleProperty("repsyUsername")
                     .orElse(providers.environmentVariable("REPSY_USERNAME"))
-                    .orElse("${providers.environmentVariable("REPSY_USERNAME")}")
-                    .get()
+                    .orNull
                 password = providers.gradleProperty("repsyPassword")
                     .orElse(providers.environmentVariable("REPSY_PASSWORD"))
                     .orNull
