@@ -1,0 +1,12 @@
+<mapper namespace="com.example.simple.mapper.InheritedPagingUserMapper">
+    <select id="selectPageByQuery">
+        select id, name, age, login_name
+        from users
+        <where>
+            <if test="query.name != null and query.name != ''">
+                name = #{query.name}
+            </if>
+        </where>
+        order by id
+    </select>
+</mapper>

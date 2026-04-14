@@ -1,0 +1,10 @@
+<mapper namespace="com.example.simple.mapper.PairUserMapper">
+    <select id="memberNumOfDay">
+        select name as key, cast(count(*) as bigint) as value
+        from users
+        where created_time <![CDATA[>=]]> #{start}
+          and created_time <![CDATA[<=]]> #{end}
+        group by name
+        order by name
+    </select>
+</mapper>

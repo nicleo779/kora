@@ -6,10 +6,6 @@ build/
 .kotlin
 
 ### IntelliJ IDEA ###
-.idea/modules.xml
-.idea/jarRepositories.xml
-.idea/compiler.xml
-.idea/libraries/
 *.iws
 *.iml
 *.ipr
@@ -42,6 +38,3 @@ bin/
 
 ### Mac OS ###
 .DS_Store
-.intellijPlatform/coroutines-javaagent-legacy.jar
-
-.intellijPlatform/coroutines-javaagent-legacy.jar
