@@ -307,7 +307,12 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
         FieldInfo idField = reflector.getField(idFieldName());
         Object converted = generatedKey;
         if (idField != null && idField.type() instanceof Class<?> targetType) {
-            converted = sqlExecutor.getTypeConverter().cast(generatedKey, targetType);
+            converted = sqlExecutor.getTypeConverter().cast(
+                    generatedKey,
+                    targetType,
+                    entityTable.idColumn().columnName(),
+                    idFieldName()
+            );
         }
         reflector.set(entity, idFieldName(), converted);
     }

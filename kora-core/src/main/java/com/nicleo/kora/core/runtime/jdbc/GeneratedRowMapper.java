@@ -45,7 +45,7 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
             }
             Class<?> targetType = resolveTargetType(fieldInfo.type());
             if (targetType != null) {
-                value = typeConverter.cast(value, targetType);
+                value = typeConverter.cast(value, targetType, columnLabel, fieldName);
             }
             reflector.set(instance, fieldName, value);
         }

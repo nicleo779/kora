@@ -102,7 +102,6 @@ public class KoraProcessor extends AbstractProcessor {
         this.types = processingEnv.getTypeUtils();
         this.projectDir = System.getProperty("preload.project.path", System.getProperty("user.dir", "."));
         this.xmlLoader = new MapperXmlLoader(projectDir);
-        messager.printMessage(Diagnostic.Kind.WARNING,this.projectDir);
         this.sourceWriter = new GeneratedJavaSourceWriter(filer);
         this.mapperSourceGenerator = new MapperSourceGenerator(new MapperSourceGenerator.Context() {
             @Override

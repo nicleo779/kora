@@ -17,6 +17,7 @@ import java.time.ZonedDateTime;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class TypeConverterJdkTypesTest {
     private final TypeConverter converter = new TypeConverter();
@@ -40,5 +41,16 @@ class TypeConverterJdkTypesTest {
 
         OffsetDateTime offsetDateTime = instant.atZone(ZoneId.systemDefault()).toOffsetDateTime();
         assertEquals(offsetDateTime.toOffsetTime(), converter.cast(offsetDateTime, OffsetTime.class));
+    }
+
+    @Test
+    void shouldReportColumnFieldAndTypeWhenConversionFails() {
+        SqlExecutorException ex = assertThrows(SqlExecutorException.class,
+                () -> converter.cast("abc", Long.class, "user_id", "userId"));
+
+        assertEquals(
+                "Failed to convert result from column 'user_id' to field 'userId' from type java.lang.String to type java.lang.Long",
+                ex.getMessage()
+        );
     }
 }

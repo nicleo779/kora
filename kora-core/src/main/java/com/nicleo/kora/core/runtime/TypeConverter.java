@@ -30,6 +30,46 @@ public final class TypeConverter {
     }
 
     public Object cast(Object value, Class<?> targetType) {
+        return cast(value, targetType, null, null);
+    }
+
+    public Object cast(Object value, Class<?> targetType, String columnName, String fieldName) {
+        try {
+            return doCast(value, targetType);
+        } catch (SqlExecutorException ex) {
+            throw ex;
+        } catch (RuntimeException ex) {
+            throw conversionFailure(value, targetType, columnName, fieldName, ex);
+        }
+    }
+
+    public Object toDbValue(Object value) {
+        if (value == null) {
+            return null;
+        }
+        Object converted = applyCustomConvertersToDb(value, wrap(value.getClass()));
+        return converted != null ? converted : value;
+    }
+
+    private Object applyCustomConvertersFromDb(Object value, Class<?> targetType) {
+        for (CustomTypeConverter converter : customConverters) {
+            if (converter.supports(targetType)) {
+                return converter.fromDb(value, targetType);
+            }
+        }
+        return null;
+    }
+
+    private Object applyCustomConvertersToDb(Object value, Class<?> sourceType) {
+        for (CustomTypeConverter converter : customConverters) {
+            if (converter.supports(sourceType)) {
+                return converter.toDb(value, sourceType);
+            }
+        }
+        return null;
+    }
+
+    private Object doCast(Object value, Class<?> targetType) {
         Class<?> normalizedTargetType = wrap(targetType);
         if (value == null) {
             if (normalizedTargetType != targetType || targetType.isPrimitive()) {
@@ -193,30 +233,21 @@ public final class TypeConverter {
         return normalizedTargetType.cast(value);
     }
 
-    public Object toDbValue(Object value) {
-        if (value == null) {
-            return null;
-        }
-        Object converted = applyCustomConvertersToDb(value, wrap(value.getClass()));
-        return converted != null ? converted : value;
-    }
-
-    private Object applyCustomConvertersFromDb(Object value, Class<?> targetType) {
-        for (CustomTypeConverter converter : customConverters) {
-            if (converter.supports(targetType)) {
-                return converter.fromDb(value, targetType);
+    private SqlExecutorException conversionFailure(Object value, Class<?> targetType, String columnName, String fieldName, RuntimeException cause) {
+        String sourceType = value == null ? "null" : value.getClass().getName();
+        StringBuilder message = new StringBuilder("Failed to convert result");
+        if (columnName != null || fieldName != null) {
+            message.append(" from");
+            if (columnName != null) {
+                message.append(" column '").append(columnName).append("'");
+            }
+            if (fieldName != null) {
+                message.append(" to field '").append(fieldName).append("'");
             }
         }
-        return null;
-    }
-
-    private Object applyCustomConvertersToDb(Object value, Class<?> sourceType) {
-        for (CustomTypeConverter converter : customConverters) {
-            if (converter.supports(sourceType)) {
-                return converter.toDb(value, sourceType);
-            }
-        }
-        return null;
+        message.append(" from type ").append(sourceType)
+                .append(" to type ").append(targetType.getName());
+        return new SqlExecutorException(message.toString(), cause);
     }
 
     private static Class<?> wrap(Class<?> type) {
