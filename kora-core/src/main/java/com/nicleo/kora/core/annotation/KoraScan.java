@@ -8,8 +8,6 @@ import java.lang.annotation.Target;
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface KoraScan {
-    String[] xml();
-
     String[] entity();
 
     String[] mapper() default {};

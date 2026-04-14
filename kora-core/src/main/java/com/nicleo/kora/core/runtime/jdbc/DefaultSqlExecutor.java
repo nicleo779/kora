@@ -176,11 +176,11 @@ public class DefaultSqlExecutor implements SqlExecutor {
     }
 
     @Override
-    public Object updateAndReturnGeneratedKey(String sql, Object[] args) {
-        return updateAndReturnGeneratedKey(sql, args, SqlExecutionContext.update(this));
+    public <T> T updateAndReturnGeneratedKey(String sql, Object[] args, Class<T> resultType) {
+        return updateAndReturnGeneratedKey(sql, args, SqlExecutionContext.update(this), resultType);
     }
 
-    public Object updateAndReturnGeneratedKey(String sql, Object[] args, SqlExecutionContext context) {
+    public <T> T updateAndReturnGeneratedKey(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
         SqlRequest request = applyInterceptors(context, new SqlRequest(sql, args));
         try (var connection = openConnection()) {
             try (PreparedStatement statement = connection.prepareStatement(request.getSql(), Statement.RETURN_GENERATED_KEYS)) {
@@ -191,7 +191,7 @@ public class DefaultSqlExecutor implements SqlExecutor {
                 }
                 try (ResultSet generatedKeys = statement.getGeneratedKeys()) {
                     if (generatedKeys.next()) {
-                        return generatedKeys.getObject(1);
+                        return typeConverter.cast(generatedKeys, 1, resultType);
                     }
                 }
             }
@@ -256,7 +256,7 @@ public class DefaultSqlExecutor implements SqlExecutor {
         }
         if (isSimpleResultType(resultType)) {
             return resultSet -> {
-                Object converted = typeConverter.cast(resultSet.getObject(1), resultType);
+                Object converted = typeConverter.cast(resultSet, 1, resultType);
                 if (converted == null) {
                     return null;
                 }
@@ -287,7 +287,6 @@ public class DefaultSqlExecutor implements SqlExecutor {
                 || Number.class.isAssignableFrom(normalized)
                 || normalized == BigDecimal.class
                 || normalized == BigInteger.class
-                || normalized == UUID.class
                 || normalized == LocalDate.class
                 || normalized == LocalDateTime.class
                 || normalized == LocalTime.class
@@ -338,7 +337,7 @@ public class DefaultSqlExecutor implements SqlExecutor {
             return;
         }
         for (int i = 0; i < args.length; i++) {
-            statement.setObject(i + 1, typeConverter.toDbValue(args[i]));
+            statement.setObject(i + 1, typeConverter.fieldToColumn(args[i]));
         }
     }
 

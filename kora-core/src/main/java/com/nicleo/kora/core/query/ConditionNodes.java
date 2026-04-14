@@ -3,7 +3,9 @@ package com.nicleo.kora.core.query;
 import com.nicleo.kora.core.runtime.DbType;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.stream.Collectors;
 
 final class ConditionNodes {
     private ConditionNodes() {
@@ -35,11 +37,8 @@ final class ConditionNodes {
         }
     }
 
-    record InCondition(SqlExpression expression, String operator, List<Object> items, boolean whenEmptyAlwaysTrue) implements ConditionNode {
-        InCondition(SqlExpression expression, String operator, Iterable<?> values, boolean whenEmptyAlwaysTrue) {
-            this(expression, operator, copy(values), whenEmptyAlwaysTrue);
-        }
-
+    record InCondition(SqlExpression expression, String operator, Collection<?> items,
+                       boolean whenEmptyAlwaysTrue) implements ConditionNode {
         @Override
         public void appendTo(StringBuilder sql, List<Object> args, DbType dbType) {
             if (items.isEmpty()) {
@@ -47,15 +46,9 @@ final class ConditionNodes {
                 return;
             }
             expression.appendTo(sql, args, dbType);
-            sql.append(' ').append(operator).append(" (");
-            for (int i = 0; i < items.size(); i++) {
-                if (i > 0) {
-                    sql.append(", ");
-                }
-                sql.append('?');
-                args.add(items.get(i));
-            }
+            sql.append(' ').append(operator).append(" (").append(items.stream().map(e -> "?").collect(Collectors.joining(", ")));
             sql.append(')');
+            args.addAll(items);
         }
     }
 

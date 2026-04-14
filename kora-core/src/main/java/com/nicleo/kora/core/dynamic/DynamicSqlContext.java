@@ -56,6 +56,19 @@ public final class DynamicSqlContext {
         return null;
     }
 
+    public Object resolveFunction(String expression, Object argument) {
+        if (expression == null || expression.isBlank()) {
+            return null;
+        }
+        int dot = expression.lastIndexOf('.');
+        if (dot < 0) {
+            return null;
+        }
+        Object target = resolveValue(expression.substring(0, dot));
+        String methodName = expression.substring(dot + 1);
+        return PropertyAccess.invoke(target, methodName, argument);
+    }
+
     public String applyText(String text) {
         StringBuilder sql = new StringBuilder();
         int index = 0;

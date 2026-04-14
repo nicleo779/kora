@@ -23,6 +23,7 @@ final class ReflectorSourceGenerator {
         KoraProcessor.ReflectSpec reflectSpec = context.reflectSpec(entityType);
         ReflectMetadataLevel metadataLevel = reflectSpec == null ? ReflectMetadataLevel.BASIC : reflectSpec.metadataLevel();
         List<ExecutableElement> methods = metadataLevel.includesMethods() ? context.collectInvokableMethods(entityType) : List.of();
+        ExecutableElement fullArgsConstructor = findFullArgsConstructor(entityType);
         List<String> expandedFieldNames = context.expandedFieldNames(entityType);
         boolean includeFieldsMetadata = metadataLevel.includesFields();
         boolean includeMethodsMetadata = metadataLevel.includesMethods();
@@ -47,6 +48,7 @@ final class ReflectorSourceGenerator {
         source.append("import com.nicleo.kora.core.runtime.GeneratedReflector;\n");
         source.append("import com.nicleo.kora.core.runtime.GeneratedReflectors;\n");
         source.append("import com.nicleo.kora.core.runtime.MethodInfo;\n");
+        source.append("import com.nicleo.kora.core.runtime.ParameterInfo;\n");
         source.append("import com.nicleo.kora.core.runtime.RuntimeTypes;\n");
         source.append("import java.lang.annotation.Annotation;\n");
         source.append("import java.lang.reflect.Type;\n");
@@ -54,7 +56,6 @@ final class ReflectorSourceGenerator {
             source.append("import java.util.concurrent.atomic.AtomicReferenceArray;\n");
         }
         if (includeMethodsMetadata) {
-            source.append("import com.nicleo.kora.core.runtime.ParameterInfo;\n");
             source.append("import java.util.Collections;\n");
             source.append("import java.util.LinkedHashSet;\n");
         }
@@ -63,10 +64,8 @@ final class ReflectorSourceGenerator {
                 .append(" implements GeneratedReflector<")
                 .append(entityTypeName).append("> {\n");
         source.append("    private static final Annotation[] NO_ANNOTATIONS = new Annotation[0];\n");
+        source.append("    private static final ParameterInfo[] NO_PARAMS = new ParameterInfo[0];\n");
         source.append("    private static final MethodInfo[] NO_METHODS = new MethodInfo[0];\n");
-        if (includeMethodsMetadata) {
-            source.append("    private static final ParameterInfo[] NO_PARAMS = new ParameterInfo[0];\n");
-        }
         source.append("    private static volatile ClassInfo classInfo;\n");
         if (parentReflectType != null) {
             source.append("    private static volatile GeneratedReflector<")
@@ -78,6 +77,11 @@ final class ReflectorSourceGenerator {
         context.collectTypeConstants(typeConstants, entityType.getSuperclass());
         for (VariableElement field : fields) {
             context.collectTypeConstants(typeConstants, field.asType());
+        }
+        if (fullArgsConstructor != null) {
+            for (VariableElement parameter : fullArgsConstructor.getParameters()) {
+                context.collectTypeConstants(typeConstants, parameter.asType());
+            }
         }
         for (ExecutableElement method : methods) {
             context.collectTypeConstants(typeConstants, method.getReturnType());
@@ -210,13 +214,13 @@ final class ReflectorSourceGenerator {
             source.append("    private static MethodInfo[] methodArray(MethodInfo methodInfo) {\n")
                     .append("        return new MethodInfo[]{methodInfo};\n")
                     .append("    }\n\n");
-            source.append("    private static ParameterInfo[] parameterArray(ParameterInfo parameterInfo) {\n")
-                    .append("        return new ParameterInfo[]{parameterInfo};\n")
-                    .append("    }\n\n");
-            source.append("    private static ParameterInfo parameter(String name, Type type) {\n")
-                    .append("        return new ParameterInfo(name, type, NO_ANNOTATIONS);\n")
-                    .append("    }\n\n");
         }
+        source.append("    private static ParameterInfo[] parameterArray(ParameterInfo parameterInfo) {\n")
+                .append("        return new ParameterInfo[]{parameterInfo};\n")
+                .append("    }\n\n");
+        source.append("    private static ParameterInfo parameter(String name, Type type) {\n")
+                .append("        return new ParameterInfo(name, type, NO_ANNOTATIONS);\n")
+                .append("    }\n\n");
         source.append("    private static ClassInfo initClassInfo() {\n")
                 .append("        ClassInfo local = classInfo;\n")
                 .append("        if (local == null) {\n")
@@ -227,7 +231,8 @@ final class ReflectorSourceGenerator {
                 .append(entityTypeName).append(".class, ")
                 .append(context.renderNullableTypeLiteral(entityType.getSuperclass())).append(", ")
                 .append(context.modifierMask(entityType.getModifiers())).append(", ")
-                .append(context.renderAnnotationArray(entityType.getAnnotationMirrors(), includeAnnotationMetadata)).append(");\n")
+                .append(context.renderAnnotationArray(entityType.getAnnotationMirrors(), includeAnnotationMetadata)).append(", ")
+                .append(renderConstructorParams(fullArgsConstructor, includeAnnotationMetadata)).append(");\n")
                 .append("                    classInfo = local;\n")
                 .append("                }\n")
                 .append("            }\n")
@@ -300,6 +305,22 @@ final class ReflectorSourceGenerator {
             source.append("        throw new UnsupportedOperationException(\"Type cannot be instantiated without accessible constructor: ")
                     .append(entityTypeName)
                     .append("\");\n");
+        }
+        source.append("    }\n\n");
+        source.append("    @Override\n    public ").append(entityTypeName).append(" newInstance(Object[] args) {\n");
+        if (fullArgsConstructor != null) {
+            source.append("        if (args == null) {\n")
+                    .append("            args = new Object[0];\n")
+                    .append("        }\n")
+                    .append("        if (args.length != ").append(fullArgsConstructor.getParameters().size()).append(") {\n")
+                    .append("            throw new IllegalArgumentException(\"Expected ").append(fullArgsConstructor.getParameters().size()).append(" constructor arguments but got \" + args.length);\n")
+                    .append("        }\n")
+                    .append("        return ").append(renderConstructorInvocation(entityType, fullArgsConstructor, "args")).append(";\n");
+        } else {
+            source.append("        if (args != null && args.length > 0) {\n")
+                    .append("            throw new IllegalArgumentException(\"Expected 0 constructor arguments but got \" + args.length);\n")
+                    .append("        }\n")
+                    .append("        return newInstance();\n");
         }
         source.append("    }\n\n");
         source.append("    @Override\n    public ClassInfo getClassInfo() {\n")
@@ -409,6 +430,49 @@ final class ReflectorSourceGenerator {
         return source.toString();
     }
 
+    private ExecutableElement findFullArgsConstructor(TypeElement entityType) {
+        ExecutableElement preferred = null;
+        for (var enclosedElement : entityType.getEnclosedElements()) {
+            if (!(enclosedElement instanceof ExecutableElement constructor) || !constructor.getKind().name().equals("CONSTRUCTOR")) {
+                continue;
+            }
+            if (constructor.getModifiers().contains(javax.lang.model.element.Modifier.PRIVATE)) {
+                continue;
+            }
+            if (preferred == null || constructor.getParameters().size() > preferred.getParameters().size()) {
+                preferred = constructor;
+            }
+        }
+        return preferred;
+    }
+
+    private String renderConstructorParams(ExecutableElement constructor, boolean includeAnnotationMetadata) {
+        return constructor == null
+                ? "NO_PARAMS"
+                : context.renderParameterInfoArray(constructor.getParameters(), includeAnnotationMetadata);
+    }
+
+    private String renderConstructorInvocation(TypeElement entityType, ExecutableElement constructor, String argsExpression) {
+        StringBuilder builder = new StringBuilder("new ")
+                .append(entityType.getQualifiedName())
+                .append("(");
+        List<? extends VariableElement> parameters = constructor.getParameters();
+        for (int i = 0; i < parameters.size(); i++) {
+            if (i > 0) {
+                builder.append(", ");
+            }
+            builder.append("(")
+                    .append(context.renderRuntimeCastType(parameters.get(i).asType()))
+                    .append(") ")
+                    .append(argsExpression)
+                    .append("[")
+                    .append(i)
+                    .append("]");
+        }
+        builder.append(")");
+        return builder.toString();
+    }
+
     interface Context {
         List<VariableElement> collectInstanceFields(TypeElement entityType);
         List<ExecutableElement> collectInvokableMethods(TypeElement entityType);
@@ -425,7 +489,9 @@ final class ReflectorSourceGenerator {
         String renderNullableTypeLiteral(javax.lang.model.type.TypeMirror typeMirror);
         int modifierMask(java.util.Set<javax.lang.model.element.Modifier> modifiers);
         String renderAnnotationArray(List<? extends javax.lang.model.element.AnnotationMirror> annotations, boolean includeAnnotationMetadata);
+        String renderParameterInfoArray(List<? extends VariableElement> parameters, boolean includeAnnotationMetadata);
         String renderNewInstanceExpression(TypeElement typeElement);
+        String renderRuntimeCastType(javax.lang.model.type.TypeMirror typeMirror);
         String buildInvokeCase(ExecutableElement method);
         String buildSetCase(TypeElement entityType, VariableElement field);
         String buildGetCase(TypeElement entityType, VariableElement field);

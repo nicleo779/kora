@@ -4,6 +4,9 @@ import com.nicleo.kora.core.runtime.GeneratedReflector;
 import com.nicleo.kora.core.runtime.GeneratedReflectors;
 import com.nicleo.kora.core.runtime.SqlExecutorException;
 
+import java.lang.reflect.Array;
+import java.util.Collection;
+import java.util.Objects;
 import java.util.Map;
 
 public final class PropertyAccess {
@@ -52,6 +55,12 @@ public final class PropertyAccess {
         if (target == null) {
             return null;
         }
+        if (property == null || property.isBlank()) {
+            return null;
+        }
+        if (property.endsWith("()")) {
+            return invoke(target, property.substring(0, property.length() - 2), null);
+        }
         if (target instanceof Map<?, ?> map) {
             return map.get(property);
         }
@@ -61,6 +70,86 @@ public final class PropertyAccess {
         } catch (RuntimeException ex) {
             throw new SqlExecutorException("Failed to resolve property '" + property + "' on type " + target.getClass().getName(), ex);
         }
+    }
+
+    static Object invoke(Object target, String methodName, Object argument) {
+        if (target == null) {
+            return null;
+        }
+        if (argument == null) {
+            return invokeZeroArg(target, methodName);
+        }
+        return invokeSingleArg(target, methodName, argument);
+    }
+
+    private static Object invokeZeroArg(Object target, String methodName) {
+        return switch (methodName) {
+            case "size" -> sizeOf(target);
+            case "length" -> sizeOf(target);
+            case "isEmpty" -> isEmpty(target);
+            default -> throw new SqlExecutorException("Unsupported zero-arg method '" + methodName + "()' on type " + target.getClass().getName());
+        };
+    }
+
+    private static Object invokeSingleArg(Object target, String methodName, Object argument) {
+        return switch (methodName) {
+            case "contains" -> contains(target, argument);
+            default -> throw new SqlExecutorException("Unsupported single-arg method '" + methodName + "(...)' on type " + target.getClass().getName());
+        };
+    }
+
+    private static int sizeOf(Object target) {
+        if (target instanceof Collection<?> collection) {
+            return collection.size();
+        }
+        if (target instanceof Map<?, ?> map) {
+            return map.size();
+        }
+        if (target instanceof CharSequence sequence) {
+            return sequence.length();
+        }
+        if (target.getClass().isArray()) {
+            return Array.getLength(target);
+        }
+        throw new SqlExecutorException("Unsupported size() on type " + target.getClass().getName());
+    }
+
+    private static boolean isEmpty(Object target) {
+        if (target instanceof Collection<?> collection) {
+            return collection.isEmpty();
+        }
+        if (target instanceof Map<?, ?> map) {
+            return map.isEmpty();
+        }
+        if (target instanceof CharSequence sequence) {
+            return sequence.isEmpty();
+        }
+        if (target.getClass().isArray()) {
+            return Array.getLength(target) == 0;
+        }
+        throw new SqlExecutorException("Unsupported isEmpty() on type " + target.getClass().getName());
+    }
+
+    private static boolean contains(Object target, Object argument) {
+        if (target instanceof Collection<?> collection) {
+            return collection.contains(argument);
+        }
+        if (target instanceof Map<?, ?> map) {
+            return map.containsKey(argument);
+        }
+        if (target instanceof CharSequence sequence) {
+            return sequence.toString().contains(String.valueOf(argument));
+        }
+        if (target.getClass().isArray()) {
+            int length = Array.getLength(target);
+            for (int i = 0; i < length; i++) {
+                if (Objects.equals(Array.get(target, i), argument)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        throw new SqlExecutorException("Unsupported contains(...) on type " + target.getClass().getName());
     }
 
     private static boolean isSimpleValue(Object value) {

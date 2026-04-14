@@ -54,6 +54,66 @@ class DynamicSqlRendererTest {
     }
 
     @Test
+    void ifExpressionShouldConsumeRightSideWhenLeftSideIsFalse() {
+        DynamicSqlNode root = SqlNodes.mixed(
+                SqlNodes.text("select * from user "),
+                SqlNodes.trim("WHERE", null, new String[]{"AND", "OR"}, new String[0],
+                        SqlNodes.ifNode("user.name != null and user.name != ''", SqlNodes.text(" and name = #{user.name}")))
+        );
+
+        BoundSql boundSql = DynamicSqlRenderer.render(root, MapperParameters.build(
+                new String[]{"user"},
+                new Object[]{new User(null, 18)}
+        ));
+
+        assertEquals("select * from user ", boundSql.getSql());
+        assertArrayEquals(new Object[0], DynamicSqlArgumentResolver.resolve(boundSql));
+    }
+
+    @Test
+    void ifExpressionShouldSupportSizeAndIsEmptyMethods() {
+        DynamicSqlNode root = SqlNodes.mixed(
+                SqlNodes.text("select * from user "),
+                SqlNodes.trim("WHERE", null, new String[]{"AND", "OR"}, new String[0],
+                        SqlNodes.mixed(
+                                SqlNodes.ifNode("ids != null and ids.size() > 0", SqlNodes.text(" and 2 = 2")),
+                                SqlNodes.ifNode("emptyIds != null and emptyIds.isEmpty()", SqlNodes.text(" and 1 = 1"))
+                        ))
+        );
+
+        BoundSql boundSql = DynamicSqlRenderer.render(root, Map.of(
+                "ids", List.of(7),
+                "emptyIds", List.of(),
+                "_parameter", Map.of("ids", List.of(7), "emptyIds", List.of())
+        ));
+
+        assertEquals("select * from user WHERE 2 = 2 and 1 = 1", boundSql.getSql());
+        assertArrayEquals(new Object[0], DynamicSqlArgumentResolver.resolve(boundSql));
+    }
+
+    @Test
+    void ifExpressionShouldSupportLengthAndContainsMethods() {
+        DynamicSqlNode root = SqlNodes.mixed(
+                SqlNodes.text("select * from user "),
+                SqlNodes.trim("WHERE", null, new String[]{"AND", "OR"}, new String[0],
+                        SqlNodes.mixed(
+                                SqlNodes.ifNode("name != null and name.length() > 0", SqlNodes.text(" and 3 = 3")),
+                                SqlNodes.ifNode("ids.contains(7)", SqlNodes.text(" and 4 = 4")),
+                                SqlNodes.ifNode("name.contains('eo')", SqlNodes.text(" and 5 = 5"))
+                        ))
+        );
+
+        BoundSql boundSql = DynamicSqlRenderer.render(root, Map.of(
+                "name", "Neo",
+                "ids", List.of(7, 8),
+                "_parameter", Map.of("name", "Neo", "ids", List.of(7, 8))
+        ));
+
+        assertEquals("select * from user WHERE 3 = 3 and 4 = 4 and 5 = 5", boundSql.getSql());
+        assertArrayEquals(new Object[0], DynamicSqlArgumentResolver.resolve(boundSql));
+    }
+
+    @Test
     void rendersForeachChooseAndBind() {
         DynamicSqlNode root = SqlNodes.mixed(
                 SqlNodes.bind("pattern", "'%' + name + '%'"),

@@ -1,6 +1,7 @@
 package com.nicleo.kora.core.query;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 public final class Conditions {
@@ -71,11 +72,11 @@ public final class Conditions {
         return new ConditionNodes.NullCondition(expression, true);
     }
 
-    public static Condition in(SqlExpression expression, Iterable<?> values) {
+    public static Condition in(SqlExpression expression, Collection<?> values) {
         return new ConditionNodes.InCondition(expression, "IN", values, false);
     }
 
-    public static Condition notIn(SqlExpression expression, Iterable<?> values) {
+    public static Condition notIn(SqlExpression expression, Collection<?> values) {
         return new ConditionNodes.InCondition(expression, "NOT IN", values, true);
     }
 

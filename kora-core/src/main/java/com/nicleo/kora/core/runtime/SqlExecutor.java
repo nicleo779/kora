@@ -9,7 +9,7 @@ public interface SqlExecutor {
 
     int update(String sql, Object[] args);
 
-    Object updateAndReturnGeneratedKey(String sql, Object[] args);
+    <T> T updateAndReturnGeneratedKey(String sql, Object[] args, Class<T> resultType);
 
     int[] executeBatch(String sql, List<Object[]> batchArgs);
 

@@ -142,7 +142,8 @@ final class ExpressionEvaluator {
         private Object parseOr() {
             Object left = parseAnd();
             while (match("or")) {
-                left = toBoolean(left) || toBoolean(parseAnd());
+                Object right = parseAnd();
+                left = toBoolean(left) || toBoolean(right);
             }
             return left;
         }
@@ -150,7 +151,8 @@ final class ExpressionEvaluator {
         private Object parseAnd() {
             Object left = parseEquality();
             while (match("and")) {
-                left = toBoolean(left) && toBoolean(parseEquality());
+                Object right = parseEquality();
+                left = toBoolean(left) && toBoolean(right);
             }
             return left;
         }
@@ -214,7 +216,17 @@ final class ExpressionEvaluator {
                     case "false" -> false;
                     default -> throw new IllegalStateException("Unexpected literal: " + token.value);
                 };
-                case "identifier" -> context.resolveValue(token.value);
+                case "identifier" -> {
+                    if (match("(")) {
+                        if (match(")")) {
+                            yield context.resolveValue(token.value + "()");
+                        }
+                        Object argument = parseOr();
+                        expect(")");
+                        yield context.resolveFunction(token.value, argument);
+                    }
+                    yield context.resolveValue(token.value);
+                }
                 default -> throw new IllegalArgumentException("Unexpected token '" + token.value + "' in expression");
             };
         }

@@ -24,7 +24,6 @@ import javax.annotation.processing.ProcessingEnvironment;
 import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.annotation.processing.SupportedOptions;
-import javax.annotation.processing.SupportedSourceVersion;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
@@ -44,10 +43,11 @@ import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
-import javax.tools.StandardLocation;
-import java.io.File;
 import java.io.IOException;
 import java.lang.annotation.RetentionPolicy;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -56,14 +56,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 @SupportedAnnotationTypes({
         "com.nicleo.kora.core.annotation.KoraScan",
         "com.nicleo.kora.core.annotation.MapperCapability",
         "com.nicleo.kora.core.annotation.Reflect"
 })
-@SupportedOptions("kora.projectDir")
+@SupportedOptions({"kora.mapper", "kora.debug"})
 public class KoraProcessor extends AbstractProcessor {
     static final String SQL_EXECUTOR = "com.nicleo.kora.core.runtime.SqlExecutor";
     private static final String LIST_TYPE = "java.util.List";
@@ -77,7 +76,13 @@ public class KoraProcessor extends AbstractProcessor {
     private Messager messager;
     private Elements elements;
     private Types types;
-    private String projectDir;
+    private List<String> mapperXmlRoots = List.of();
+    private boolean debugEnabled;
+    private long debugStartNanos;
+    private long debugStartMillis;
+    private long entityElapsedNanos;
+    private long mapperElapsedNanos;
+    private boolean mapperOptionWarningPrinted;
     private MapperXmlLoader xmlLoader;
     private GeneratedJavaSourceWriter sourceWriter;
     private MapperSourceGenerator mapperSourceGenerator;
@@ -92,6 +97,11 @@ public class KoraProcessor extends AbstractProcessor {
     private final Set<String> generatedMeta = new HashSet<>();
     private final Set<String> generatedMappers = new HashSet<>();
     private final Set<String> generatedSupports = new HashSet<>();
+    private final Map<String, Boolean> mapperCapabilityPresenceCache = new LinkedHashMap<>();
+    private final Map<String, List<TypeElement>> mapperCapabilityEntityTypesCache = new LinkedHashMap<>();
+    private final Set<String> expandedAutoReflectTypes = new HashSet<>();
+    private final Map<String, List<VariableElement>> instanceFieldsCache = new LinkedHashMap<>();
+    private static final DateTimeFormatter DEBUG_TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
 
     @Override
     public synchronized void init(ProcessingEnvironment processingEnv) {
@@ -100,8 +110,9 @@ public class KoraProcessor extends AbstractProcessor {
         this.messager = processingEnv.getMessager();
         this.elements = processingEnv.getElementUtils();
         this.types = processingEnv.getTypeUtils();
-        this.projectDir = System.getProperty("preload.project.path", System.getProperty("user.dir", "."));
-        this.xmlLoader = new MapperXmlLoader(projectDir);
+        this.mapperXmlRoots = parseMapperXmlRoots(processingEnv.getOptions().get("kora.mapper"));
+        this.debugEnabled = isDebugEnabled(processingEnv.getOptions().get("kora.debug"));
+        this.xmlLoader = new MapperXmlLoader();
         this.sourceWriter = new GeneratedJavaSourceWriter(filer);
         this.mapperSourceGenerator = new MapperSourceGenerator(new MapperSourceGenerator.Context() {
             @Override
@@ -257,8 +268,18 @@ public class KoraProcessor extends AbstractProcessor {
             }
 
             @Override
+            public String renderParameterInfoArray(List<? extends VariableElement> parameters, boolean includeAnnotationMetadata) {
+                return KoraProcessor.this.renderParameterInfoArray(parameters, includeAnnotationMetadata);
+            }
+
+            @Override
             public String renderNewInstanceExpression(TypeElement typeElement) {
                 return KoraProcessor.this.renderNewInstanceExpression(typeElement);
+            }
+
+            @Override
+            public String renderRuntimeCastType(TypeMirror typeMirror) {
+                return KoraProcessor.this.renderRuntimeCastType(typeMirror);
             }
 
             @Override
@@ -310,14 +331,31 @@ public class KoraProcessor extends AbstractProcessor {
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+        if (debugEnabled && debugStartNanos == 0L) {
+            debugStartNanos = System.nanoTime();
+            debugStartMillis = System.currentTimeMillis();
+        }
+        mapperCapabilityPresenceCache.clear();
+        mapperCapabilityEntityTypesCache.clear();
         collectReflectSpecs(roundEnv);
+        long mapperStart = System.nanoTime();
         collectMapperCapabilitySpecs(roundEnv);
         collectScanSpecs(roundEnv);
         collectMapperReflectSpecs(roundEnv);
         generateReflectors();
-        generateMeta(roundEnv);
+        mapperElapsedNanos += System.nanoTime() - mapperStart;
+
+        long entityStart = System.nanoTime();
+        generateMeta();
+        entityElapsedNanos += System.nanoTime() - entityStart;
+
         if (!roundEnv.processingOver() && annotations.isEmpty()) {
-            generateSupportsAndMappers(roundEnv);
+            mapperStart = System.nanoTime();
+            generateSupportsAndMappers();
+            mapperElapsedNanos += System.nanoTime() - mapperStart;
+        }
+        if (debugEnabled && roundEnv.processingOver() && debugStartNanos != 0L) {
+            printDebugSummary();
         }
         return false;
     }
@@ -370,18 +408,17 @@ public class KoraProcessor extends AbstractProcessor {
                 continue;
             }
             TypeElement configType = (TypeElement) element;
+            warnIfMapperOptionMissing(configType);
             String configQualifiedName = configType.getQualifiedName().toString();
             boolean exists = scanSpecs.stream().anyMatch(spec -> spec.configQualifiedName.equals(configQualifiedName));
             if (exists) {
                 continue;
             }
             KoraScan scan = configType.getAnnotation(KoraScan.class);
-            scanSpecs.add(new ScanSpec(configType, List.of(scan.xml()), List.of(scan.entity()), List.of(scan.mapper())));
+            scanSpecs.add(new ScanSpec(configType, mapperXmlRoots, List.of(scan.entity()), List.of(scan.mapper())));
         }
-        for (ScanSpec scanSpec : scanSpecs) {
-            for (Element rootElement : roundEnv.getRootElements()) {
-                collectMapperTypes(rootElement, scanSpec.mapperPackages, scanSpec.mapperTypeNames);
-            }
+        for (Element rootElement : roundEnv.getRootElements()) {
+            collectScanTypes(rootElement);
         }
     }
 
@@ -398,10 +435,18 @@ public class KoraProcessor extends AbstractProcessor {
         }
     }
 
-    private void generateMeta(RoundEnvironment roundEnv) {
+    private void generateMeta() {
         for (ScanSpec scanSpec : scanSpecs) {
-            for (Element rootElement : roundEnv.getRootElements()) {
-                collectAndGenerateMeta(rootElement, scanSpec.entityPackages);
+            for (String entityTypeName : scanSpec.entityTypeNames) {
+                TypeElement entityType = elements.getTypeElement(entityTypeName);
+                if (entityType == null || !generatedMeta.add(entityTypeName)) {
+                    continue;
+                }
+                try {
+                    writeMetaClass(entityType);
+                } catch (IOException ex) {
+                    messager.printMessage(Diagnostic.Kind.ERROR, "Failed to generate meta class: " + ex.getMessage(), entityType);
+                }
             }
         }
     }
@@ -440,28 +485,6 @@ public class KoraProcessor extends AbstractProcessor {
         }
     }
 
-    private void collectAndGenerateMeta(Element element, List<String> entityPackages) {
-        if (element.getKind().isClass() && element instanceof TypeElement typeElement) {
-            if (isGeneratedType(typeElement)) {
-                return;
-            }
-            String packageName = packageNameOf(typeElement);
-            boolean matched = entityPackages.stream().anyMatch(pkg -> packageName.equals(pkg) || packageName.startsWith(pkg + "."));
-            if (matched && generatedMeta.add(typeElement.getQualifiedName().toString())) {
-                try {
-                    writeMetaClass(typeElement);
-                } catch (IOException ex) {
-                    messager.printMessage(Diagnostic.Kind.ERROR, "Failed to generate meta class: " + ex.getMessage(), typeElement);
-                }
-            }
-        }
-        for (Element enclosed : element.getEnclosedElements()) {
-            if (enclosed.getKind().isClass()) {
-                collectAndGenerateMeta(enclosed, entityPackages);
-            }
-        }
-    }
-
     private List<TypeElement> findMapperTypes(ScanSpec scanSpec) {
         if (scanSpec.mapperTypeNames.isEmpty()) {
             return List.of();
@@ -476,28 +499,35 @@ public class KoraProcessor extends AbstractProcessor {
         return mapperTypes;
     }
 
-    private List<TypeElement> findEntityTypes(ScanSpec scanSpec, RoundEnvironment roundEnv) {
+    private List<TypeElement> findEntityTypes(ScanSpec scanSpec) {
         List<TypeElement> entityTypes = new ArrayList<>();
-        for (String qualifiedName : generatedMeta) {
+        for (String qualifiedName : scanSpec.entityTypeNames) {
             TypeElement typeElement = elements.getTypeElement(qualifiedName);
-            if (typeElement != null && matchesPackage(typeElement, scanSpec.entityPackages)) {
+            if (typeElement != null) {
                 entityTypes.add(typeElement);
             }
         }
         return entityTypes;
     }
 
-    private void collectMapperTypes(Element element, List<String> mapperPackages, Set<String> mapperTypeNames) {
+    private void collectScanTypes(Element element) {
         if (element instanceof TypeElement typeElement) {
-            if (!isGeneratedType(typeElement)
-                    && typeElement.getKind() == ElementKind.INTERFACE
-                    && matchesPackage(typeElement, mapperPackages)) {
-                mapperTypeNames.add(typeElement.getQualifiedName().toString());
+            if (isGeneratedType(typeElement)) {
+                return;
+            }
+            String qualifiedName = typeElement.getQualifiedName().toString();
+            for (ScanSpec scanSpec : scanSpecs) {
+                if (typeElement.getKind() == ElementKind.INTERFACE && matchesPackage(typeElement, scanSpec.mapperPackages)) {
+                    scanSpec.mapperTypeNames.add(qualifiedName);
+                }
+                if (typeElement.getKind().isClass() && matchesPackage(typeElement, scanSpec.entityPackages)) {
+                    scanSpec.entityTypeNames.add(qualifiedName);
+                }
             }
         }
         for (Element enclosed : element.getEnclosedElements()) {
             if (enclosed.getKind().isClass() || enclosed.getKind().isInterface()) {
-                collectMapperTypes(enclosed, mapperPackages, mapperTypeNames);
+                collectScanTypes(enclosed);
             }
         }
     }
@@ -515,10 +545,10 @@ public class KoraProcessor extends AbstractProcessor {
                 || simpleName.endsWith("Table");
     }
 
-    private void generateSupportsAndMappers(RoundEnvironment roundEnv) {
+    private void generateSupportsAndMappers() {
         for (ScanSpec scanSpec : scanSpecs) {
             try {
-                writeSupportClass(scanSpec, findEntityTypes(scanSpec, roundEnv));
+                writeSupportClass(scanSpec, findEntityTypes(scanSpec));
                 Map<String, MapperXmlDefinition> xmlDefinitions = loadMapperXmlDefinitions(scanSpec);
                 for (MapperXmlDefinition xmlDefinition : xmlDefinitions.values()) {
                     TypeElement mapperType = elements.getTypeElement(xmlDefinition.getNamespace());
@@ -553,7 +583,70 @@ public class KoraProcessor extends AbstractProcessor {
     }
 
     private Map<String, MapperXmlDefinition> loadMapperXmlDefinitions(ScanSpec scanSpec) throws IOException {
-        return xmlLoader.load(scanSpec.xmlRoots);
+        if (scanSpec.xmlDefinitions != null) {
+            return scanSpec.xmlDefinitions;
+        }
+        scanSpec.xmlDefinitions = xmlLoader.load(scanSpec.xmlRoots);
+        return scanSpec.xmlDefinitions;
+    }
+
+    private List<String> parseMapperXmlRoots(String optionValue) {
+        if (optionValue == null || optionValue.isBlank()) {
+            return List.of();
+        }
+        return List.of(optionValue.split(","))
+                .stream()
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .toList();
+    }
+
+    private boolean isDebugEnabled(String optionValue) {
+        if (optionValue == null) {
+            return false;
+        }
+        return optionValue.equalsIgnoreCase("true")
+                || optionValue.equalsIgnoreCase("1")
+                || optionValue.equalsIgnoreCase("yes")
+                || optionValue.equalsIgnoreCase("on");
+    }
+
+    private void printDebugSummary() {
+        long endMillis = System.currentTimeMillis();
+        long totalElapsedNanos = System.nanoTime() - debugStartNanos;
+        String message = "kora.debug start=" + formatClockTime(debugStartMillis)
+                + ", end=" + formatClockTime(endMillis)
+                + ", total=" + formatElapsed(totalElapsedNanos)
+                + ", entity=" + formatElapsed(entityElapsedNanos)
+                + ", mapper=" + formatElapsed(mapperElapsedNanos);
+        messager.printMessage(Diagnostic.Kind.NOTE, message);
+    }
+
+    private String formatClockTime(long epochMillis) {
+        return Instant.ofEpochMilli(epochMillis)
+                .atZone(ZoneId.systemDefault())
+                .toLocalTime()
+                .format(DEBUG_TIME_FORMATTER);
+    }
+
+    private String formatElapsed(long elapsedNanos) {
+        long elapsedMillis = elapsedNanos / 1_000_000L;
+        long minutes = elapsedMillis / 60_000L;
+        long seconds = (elapsedMillis % 60_000L) / 1_000L;
+        long millis = elapsedMillis % 1_000L;
+        return String.format("%02d:%02d.%03d", minutes, seconds, millis);
+    }
+
+    private void warnIfMapperOptionMissing(TypeElement configType) {
+        if (mapperOptionWarningPrinted || !mapperXmlRoots.isEmpty()) {
+            return;
+        }
+        mapperOptionWarningPrinted = true;
+        messager.printMessage(
+                Diagnostic.Kind.WARNING,
+                "Missing compiler option 'kora.mapper'. Configure mapper xml paths, for example: -Akora.mapper=${project.projectDir}/src/main/resources/mapper",
+                configType
+        );
     }
 
     private void writeMetaClass(TypeElement entityType) throws IOException {
@@ -701,7 +794,10 @@ public class KoraProcessor extends AbstractProcessor {
     }
 
     private String renderParameterInfoArray(ExecutableElement method, boolean includeAnnotationMetadata) {
-        List<? extends VariableElement> parameters = method.getParameters();
+        return renderParameterInfoArray(method.getParameters(), includeAnnotationMetadata);
+    }
+
+    private String renderParameterInfoArray(List<? extends VariableElement> parameters, boolean includeAnnotationMetadata) {
         if (parameters.isEmpty()) {
             return "NO_PARAMS";
         }
@@ -1183,6 +1279,9 @@ public class KoraProcessor extends AbstractProcessor {
 
     private void registerReflectType(TypeElement typeElement, Set<String> visiting) {
         String qualifiedName = typeElement.getQualifiedName().toString();
+        if (expandedAutoReflectTypes.contains(qualifiedName)) {
+            return;
+        }
         if (!visiting.add(qualifiedName)) {
             return;
         }
@@ -1194,17 +1293,22 @@ public class KoraProcessor extends AbstractProcessor {
         for (VariableElement field : collectInstanceFields(typeElement)) {
             registerReflectTypes(field.asType(), visiting);
         }
+        expandedAutoReflectTypes.add(qualifiedName);
         visiting.remove(qualifiedName);
     }
 
     private boolean shouldAutoReflect(TypeElement typeElement) {
-        if (typeElement == null || typeElement.getKind() != ElementKind.CLASS || isGeneratedType(typeElement)) {
+        if (typeElement == null || !isReflectTarget(typeElement) || isGeneratedType(typeElement)) {
             return false;
         }
         String packageName = packageNameOf(typeElement);
         return !packageName.startsWith("java.")
                 && !packageName.startsWith("javax.")
                 && !packageName.startsWith("jakarta.");
+    }
+
+    private boolean isReflectTarget(TypeElement typeElement) {
+        return typeElement.getKind() == ElementKind.CLASS || typeElement.getKind().name().equals("RECORD");
     }
 
     private void ensureReflectorIfNeeded(TypeMirror typeMirror) {
@@ -1387,12 +1491,30 @@ public class KoraProcessor extends AbstractProcessor {
     }
 
     private boolean hasMapperCapability(TypeElement mapperType) {
-        return hasMapperCapability(mapperType.asType());
+        String qualifiedName = mapperType.getQualifiedName().toString();
+        Boolean cached = mapperCapabilityPresenceCache.get(qualifiedName);
+        if (cached != null) {
+            return cached;
+        }
+        boolean result = hasMapperCapability(mapperType.asType(), new HashSet<>());
+        mapperCapabilityPresenceCache.put(qualifiedName, result);
+        return result;
     }
 
-    private boolean hasMapperCapability(TypeMirror typeMirror) {
+    private boolean hasMapperCapability(TypeMirror typeMirror, Set<String> visiting) {
         if (!(typeMirror instanceof DeclaredType declaredType)) {
             return false;
+        }
+        TypeElement currentType = asTypeElement(typeMirror);
+        if (currentType != null) {
+            String qualifiedName = currentType.getQualifiedName().toString();
+            Boolean cached = mapperCapabilityPresenceCache.get(qualifiedName);
+            if (cached != null) {
+                return cached;
+            }
+            if (!visiting.add(qualifiedName)) {
+                return false;
+            }
         }
         for (TypeMirror interfaceTypeMirror : types.directSupertypes(declaredType)) {
             if (!(interfaceTypeMirror instanceof DeclaredType interfaceType)) {
@@ -1403,23 +1525,46 @@ public class KoraProcessor extends AbstractProcessor {
                 continue;
             }
             if (mapperCapabilitySpecs.containsKey(interfaceElement.getQualifiedName().toString())) {
+                if (currentType != null) {
+                    mapperCapabilityPresenceCache.put(currentType.getQualifiedName().toString(), true);
+                    visiting.remove(currentType.getQualifiedName().toString());
+                }
                 return true;
             }
-            if (hasMapperCapability(interfaceType)) {
+            if (hasMapperCapability(interfaceType, visiting)) {
+                if (currentType != null) {
+                    mapperCapabilityPresenceCache.put(currentType.getQualifiedName().toString(), true);
+                    visiting.remove(currentType.getQualifiedName().toString());
+                }
                 return true;
             }
+        }
+        if (currentType != null) {
+            mapperCapabilityPresenceCache.put(currentType.getQualifiedName().toString(), false);
+            visiting.remove(currentType.getQualifiedName().toString());
         }
         return false;
     }
 
     private List<TypeElement> mapperCapabilityEntityTypes(TypeElement mapperType) {
+        String qualifiedName = mapperType.getQualifiedName().toString();
+        List<TypeElement> cached = mapperCapabilityEntityTypesCache.get(qualifiedName);
+        if (cached != null) {
+            return cached;
+        }
         Map<String, TypeElement> entityTypes = new LinkedHashMap<>();
-        collectMapperEntityTypes(mapperType.asType(), entityTypes);
-        return new ArrayList<>(entityTypes.values());
+        collectMapperEntityTypes(mapperType.asType(), entityTypes, new HashSet<>());
+        List<TypeElement> result = new ArrayList<>(entityTypes.values());
+        mapperCapabilityEntityTypesCache.put(qualifiedName, result);
+        return result;
     }
 
-    private void collectMapperEntityTypes(TypeMirror typeMirror, Map<String, TypeElement> entityTypes) {
+    private void collectMapperEntityTypes(TypeMirror typeMirror, Map<String, TypeElement> entityTypes, Set<String> visiting) {
         if (!(typeMirror instanceof DeclaredType declaredType)) {
+            return;
+        }
+        TypeElement currentType = asTypeElement(typeMirror);
+        if (currentType != null && !visiting.add(currentType.getQualifiedName().toString())) {
             return;
         }
         for (TypeMirror interfaceTypeMirror : types.directSupertypes(declaredType)) {
@@ -1436,7 +1581,10 @@ public class KoraProcessor extends AbstractProcessor {
                     entityTypes.putIfAbsent(entityTypeElement.getQualifiedName().toString(), entityTypeElement);
                 }
             }
-            collectMapperEntityTypes(interfaceType, entityTypes);
+            collectMapperEntityTypes(interfaceType, entityTypes, visiting);
+        }
+        if (currentType != null) {
+            visiting.remove(currentType.getQualifiedName().toString());
         }
     }
 
@@ -1640,6 +1788,11 @@ public class KoraProcessor extends AbstractProcessor {
     }
 
     private List<VariableElement> collectInstanceFields(TypeElement entityType) {
+        String qualifiedName = entityType.getQualifiedName().toString();
+        List<VariableElement> cached = instanceFieldsCache.get(qualifiedName);
+        if (cached != null) {
+            return cached;
+        }
         List<VariableElement> fields = new ArrayList<>();
         for (Element enclosedElement : entityType.getEnclosedElements()) {
             if (enclosedElement.getKind() == ElementKind.FIELD && !enclosedElement.getModifiers().contains(Modifier.STATIC)) {
@@ -1649,7 +1802,9 @@ public class KoraProcessor extends AbstractProcessor {
                 }
             }
         }
-        return fields;
+        List<VariableElement> result = List.copyOf(fields);
+        instanceFieldsCache.put(qualifiedName, result);
+        return result;
     }
 
     private List<VariableElement> collectTableFields(TypeElement entityType) {
@@ -2202,7 +2357,9 @@ public class KoraProcessor extends AbstractProcessor {
         private final List<String> xmlRoots;
         private final List<String> entityPackages;
         private final List<String> mapperPackages;
+        private final Set<String> entityTypeNames = new LinkedHashSet<>();
         private final Set<String> mapperTypeNames = new LinkedHashSet<>();
+        private Map<String, MapperXmlDefinition> xmlDefinitions;
 
         private ScanSpec(TypeElement configType, List<String> xmlRoots, List<String> entityPackages, List<String> mapperPackages) {
             this.configType = configType;

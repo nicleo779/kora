@@ -2,7 +2,9 @@ package com.nicleo.kora.core.runtime.jdbc;
 
 import com.nicleo.kora.core.runtime.FieldInfo;
 import com.nicleo.kora.core.runtime.GeneratedReflector;
+import com.nicleo.kora.core.runtime.ParameterInfo;
 import com.nicleo.kora.core.runtime.RowMapper;
+import com.nicleo.kora.core.runtime.SqlExecutorException;
 import com.nicleo.kora.core.runtime.TypeConverter;
 
 import java.sql.ResultSet;
@@ -16,6 +18,7 @@ import java.util.Map;
 import java.util.Objects;
 
 public final class GeneratedRowMapper<T> implements RowMapper<T> {
+    private final Class<T> entityType;
     private final GeneratedReflector<T> reflector;
     private final TypeConverter typeConverter;
     private final Map<String, String> columnToField;
@@ -25,7 +28,7 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
     }
 
     public GeneratedRowMapper(Class<T> entityType, GeneratedReflector<T> reflector, TypeConverter typeConverter) {
-        Objects.requireNonNull(entityType, "entityType");
+        this.entityType = Objects.requireNonNull(entityType, "entityType");
         this.reflector = Objects.requireNonNull(reflector, "reflector");
         this.typeConverter = Objects.requireNonNull(typeConverter, "typeConverter");
         this.columnToField = buildColumnToFieldMap(reflector);
@@ -33,23 +36,61 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
 
     @Override
     public T mapRow(ResultSet resultSet) throws SQLException {
-        T instance = reflector.newInstance();
         ResultSetMetaData metaData = resultSet.getMetaData();
+        if (entityType.isRecord()) {
+            return mapRecord(resultSet, metaData);
+        }
+        T instance = reflector.newInstance();
         for (int columnIndex = 1; columnIndex <= metaData.getColumnCount(); columnIndex++) {
             String columnLabel = metaData.getColumnLabel(columnIndex);
-            Object value = resultSet.getObject(columnIndex);
             String fieldName = resolveFieldName(columnLabel);
             FieldInfo fieldInfo = reflector.getField(fieldName);
             if (fieldInfo == null) {
                 continue;
             }
             Class<?> targetType = resolveTargetType(fieldInfo.type());
+            Object value;
             if (targetType != null) {
-                value = typeConverter.cast(value, targetType, columnLabel, fieldName);
+                value = typeConverter.cast(resultSet, columnIndex, targetType, columnLabel, fieldName);
+            } else {
+                value = resultSet.getObject(columnIndex);
             }
             reflector.set(instance, fieldName, value);
         }
         return instance;
+    }
+
+    private T mapRecord(ResultSet resultSet, ResultSetMetaData metaData) throws SQLException {
+        ParameterInfo[] params = constructorParams();
+        Map<String, Object> values = new HashMap<>();
+        for (int columnIndex = 1; columnIndex <= metaData.getColumnCount(); columnIndex++) {
+            String columnLabel = metaData.getColumnLabel(columnIndex);
+            String fieldName = resolveFieldName(columnLabel);
+            FieldInfo fieldInfo = reflector.getField(fieldName);
+            if (fieldInfo == null) {
+                continue;
+            }
+            Class<?> targetType = resolveTargetType(fieldInfo.type());
+            Object value;
+            if (targetType != null) {
+                value = typeConverter.cast(resultSet, columnIndex, targetType, columnLabel, fieldName);
+            } else {
+                value = resultSet.getObject(columnIndex);
+            }
+            values.put(fieldName, value);
+        }
+        Object[] args = new Object[params.length];
+        for (int i = 0; i < params.length; i++) {
+            args[i] = values.getOrDefault(params[i].name(), defaultValue(resolveTargetType(params[i].type())));
+        }
+        return reflector.newInstance(args);
+    }
+
+    private ParameterInfo[] constructorParams() {
+        if (reflector.getClassInfo() == null || reflector.getClassInfo().params() == null || reflector.getClassInfo().params().length == 0) {
+            throw new SqlExecutorException("No constructor metadata available for record type: " + entityType.getName());
+        }
+        return reflector.getClassInfo().params();
     }
 
     private String resolveFieldName(String columnLabel) {
@@ -71,6 +112,23 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
             return rawType;
         }
         return null;
+    }
+
+    private Object defaultValue(Class<?> type) {
+        if (type == null || !type.isPrimitive()) {
+            return null;
+        }
+        return switch (type.getName()) {
+            case "boolean" -> false;
+            case "byte" -> (byte) 0;
+            case "short" -> (short) 0;
+            case "int" -> 0;
+            case "long" -> 0L;
+            case "float" -> 0F;
+            case "double" -> 0D;
+            case "char" -> '\0';
+            default -> null;
+        };
     }
 
     private Map<String, String> buildColumnToFieldMap(GeneratedReflector<T> reflector) {

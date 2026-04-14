@@ -74,6 +74,7 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
 
     @Override
     public List<T> selectList(WhereWrapper query) {
+        if (query == null) query = new WhereWrapper();
         SqlRequest request = sqlExecutor.getSqlGenerator().renderSelect(entityTable, query.toDefinition(), sqlExecutor.getDbType());
         return sqlExecutor.selectList(request.getSql(), request.getArgs(), entityClass);
     }
@@ -86,6 +87,7 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
 
     @Override
     public long count(WhereWrapper query) {
+        if (query == null) query = new WhereWrapper();
         var whereDefinition = query.toDefinition();
         SqlRequest request = sqlExecutor.getSqlGenerator().renderSelect(entityTable, query.toDefinition(), sqlExecutor.getDbType());
         SqlRequest countRequest = sqlExecutor.getSqlGenerator().rewriteCount(
@@ -115,6 +117,7 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
 
     @Override
     public Page<T> page(Paging paging, WhereWrapper query) {
+        if (query == null) query = new WhereWrapper();
         var whereDefinition = query.toDefinition();
         SqlRequest request = sqlExecutor.getSqlGenerator().renderSelect(entityTable, whereDefinition, sqlExecutor.getDbType());
         SqlRequest countRequest = sqlExecutor.getSqlGenerator().rewriteCount(
@@ -146,8 +149,8 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
     public int insert(T entity) {
         InsertSpec spec = buildInsertSpec(entity);
         if (spec.assignGeneratedId()) {
-            Object generatedKey = sqlExecutor.updateAndReturnGeneratedKey(spec.sql(), spec.args());
-            assignGeneratedId(entity, GeneratedReflectors.get(entityClass), generatedKey);
+            Object generatedKey = sqlExecutor.updateAndReturnGeneratedKey(spec.sql(), spec.args(), entityTable.idColumn().javaType());
+            GeneratedReflectors.get(entityClass).set(entity, idFieldName(), generatedKey);
             return generatedKey == null ? 0 : 1;
         }
         return sqlExecutor.update(spec.sql(), spec.args());
@@ -304,17 +307,6 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
         if (generatedKey == null) {
             return;
         }
-        FieldInfo idField = reflector.getField(idFieldName());
-        Object converted = generatedKey;
-        if (idField != null && idField.type() instanceof Class<?> targetType) {
-            converted = sqlExecutor.getTypeConverter().cast(
-                    generatedKey,
-                    targetType,
-                    entityTable.idColumn().columnName(),
-                    idFieldName()
-            );
-        }
-        reflector.set(entity, idFieldName(), converted);
     }
 
     private Object generateId(T entity) {

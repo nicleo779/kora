@@ -1,9 +1,11 @@
 package com.nicleo.kora.core.runtime;
 
+import java.sql.ResultSet;
+
 public interface CustomTypeConverter {
     boolean supports(Class<?> targetType);
 
-    Object fromDb(Object value, Class<?> targetType);
+    <T> T columnToField(ResultSet resultSet, int index, Class<T> targetType);
 
-    Object toDb(Object value, Class<?> targetType);
+    Object fieldToColumn(Object value);
 }

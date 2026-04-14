@@ -3,6 +3,10 @@ package com.nicleo.kora.core.runtime;
 public interface GeneratedReflector<T> {
     T newInstance();
 
+    default T newInstance(Object[] args) {
+        throw new UnsupportedOperationException("Type does not support constructor instantiation");
+    }
+
     default ClassInfo getClassInfo() {
         return null;
     }

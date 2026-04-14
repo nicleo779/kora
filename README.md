@@ -24,7 +24,7 @@
 
 ## 当前能力
 
-- `@KoraScan` 扫描 XML、实体包、Mapper 包
+- `@KoraScan` 扫描实体包、Mapper 包，XML 通过 `-Akora.mapper=...` 指定
 - `@Reflect` 生成 `XxxReflector`
 - XML `select / insert / update / delete`
 - XML 动态标签 `where / if / foreach`
@@ -62,6 +62,10 @@ dependencies {
     implementation(project(":kora-core"))
     annotationProcessor(project(":kora-processor"))
 }
+
+tasks.withType<JavaCompile>().configureEach {
+    options.compilerArgs.add("-Akora.mapper=${project.projectDir}/src/main/resources/mapper")
+}
 ```
 
 ### 2. 扫描入口
@@ -72,7 +76,6 @@ package com.example.simple.config;
 import com.nicleo.kora.core.annotation.KoraScan;
 
 @KoraScan(
-        xml = {"/mapper"},
         entity = {"com.example.simple.entity"},
         mapper = {"com.example.simple.mapper"}
 )
@@ -457,6 +460,100 @@ Sql.deleteById(User.class, 1L);
 
 - `https://repo.repsy.io/${providers.environmentVariable("REPSY_USERNAME")}/public`
 
+## 性能测试
+
+`simple` 模块内置了基于 `JMH` 的性能测试，当前覆盖这些场景：
+
+- 单条查询 `selectById`
+- 范围查询 `selectByAgeRange`
+- 单条写入 `insertOne`
+- 单条更新 `updateById`
+- 单条删除 `deleteById`
+- 分页查询 `page`
+- 批量写入 `batchInsert(100 rows/batch)`
+
+性能测试代码：
+
+- `simple/src/test/java/com/example/simple/benchmark/SimpleMapperPerformanceBenchmark.java`
+
+运行方式：
+
+```bash
+./gradlew :simple:jmh
+```
+
+只看 `Kora` 和 `MyBatis-Plus` 对比：
+
+```bash
+./gradlew :simple:jmh --args "SimpleMapperPerformanceBenchmark.(kora|myBatisPlus).* -wi 1 -i 3 -w 1s -r 1s -f 1"
+```
+
+说明：
+
+- 默认基准模式为 `Throughput`
+- 输出单位为 `ops/s`
+- 数据库使用内存 `H2`
+- 当前主对比维度是 `Kora` 与 `MyBatis-Plus`
+- `MyBatis` 基线仍保留在部分查询场景中，方便后续继续扩展
+
+### 本地测试数据
+
+测试环境：
+
+- JDK `21`
+- GraalVM CE `21.0.2`
+- `1` 线程
+- `1` 次预热 / `3` 次测量 / 每次 `1s`
+
+#### Kora vs MyBatis-Plus
+
+| 场景 | Kora (ops/s) | MyBatis-Plus (ops/s) | Kora 提升 |
+|---|---:|---:|---:|
+| `selectById` | 115,950 | 52,884 | 2.19x |
+| `insertOne` | 150,471 | 80,018 | 1.88x |
+| `updateById` | 157,653 | 34,766 | 4.54x |
+| `deleteById` | 214,782 | 35,865 | 5.99x |
+| `page` | 204.042 | 192.482 | 1.06x |
+| `batchInsert` | 2,926.059 | 1,445.284 | 2.02x |
+
+批量写入按 `100 rows/batch` 折算吞吐：
+
+- `Kora`: `292,606 rows/s`
+- `MyBatis-Plus`: `144,528 rows/s`
+
+额外范围查询场景：
+
+| 场景 | Kora (ops/s) | MyBatis-Plus (ops/s) | Kora 提升 |
+|---|---:|---:|---:|
+| `selectByAgeRange` | 50.137 | 3.128 | 16.03x |
+
+#### 图表
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"background":"#0f172a","primaryColor":"#2563eb","secondaryColor":"#f97316","tertiaryColor":"#22c55e","primaryTextColor":"#e5e7eb","secondaryTextColor":"#e5e7eb","tertiaryTextColor":"#e5e7eb","lineColor":"#94a3b8","textColor":"#e5e7eb","mainBkg":"#0f172a","fontFamily":"ui-sans-serif"}}}%%
+xychart-beta
+    title "CRUD Throughput (ops/s)"
+    x-axis ["selectById", "insertOne", "updateById", "deleteById"]
+    y-axis "ops/s" 0 --> 220000
+    bar [115950, 150471, 157653, 214782]
+    bar [52884, 80018, 34766, 35865]
+```
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"background":"#0f172a","primaryColor":"#2563eb","secondaryColor":"#f97316","tertiaryColor":"#22c55e","primaryTextColor":"#e5e7eb","secondaryTextColor":"#e5e7eb","tertiaryTextColor":"#e5e7eb","lineColor":"#94a3b8","textColor":"#e5e7eb","mainBkg":"#0f172a","fontFamily":"ui-sans-serif"}}}%%
+xychart-beta
+    title "Page / Batch Throughput"
+    x-axis ["page", "batchInsert"]
+    y-axis "ops/s" 0 --> 3200
+    bar [204, 2926]
+    bar [192, 1445]
+```
+
+图例：
+
+- 第一组柱状为 `Kora`
+- 第二组柱状为 `MyBatis-Plus`
+
 ## 项目结构
 
 ```text
@@ -473,4 +570,5 @@ Sql.deleteById(User.class, 1L);
 - `simple/src/main/java/com/example/simple/mapper/UserMapper.java`
 - `simple/src/main/resources/mapper/UserMapper.xml`
 - `simple/src/test/java/com/example/simple/SimpleIntegrationTest.java`
+- `simple/src/test/java/com/example/simple/benchmark/SimpleMapperPerformanceBenchmark.java`
 - `kora-spring-boot/src/test/java/com/nicleo/kora/spring/boot/autoconfigure/KoraAutoConfigurationTest.java`

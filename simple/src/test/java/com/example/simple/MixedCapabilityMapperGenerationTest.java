@@ -49,7 +49,7 @@ class MixedCapabilityMapperGenerationTest {
         }
 
         @Override
-        public Object updateAndReturnGeneratedKey(String sql, Object[] args) {
+        public <T> T updateAndReturnGeneratedKey(String sql, Object[] args, Class<T> resultType) {
             throw new UnsupportedOperationException();
         }
 
