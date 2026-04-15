@@ -27,7 +27,7 @@ publishing {
             from(components["java"])
 
             pom {
-                name.set("kora-processor")
+                name.set("kora-core")
                 description.set(project.description)
                 licenses {
                     license {
