@@ -482,10 +482,10 @@ Sql.deleteById(User.class, 1L);
 ./gradlew :simple:jmh
 ```
 
-只看 `Kora` 和 `MyBatis-Plus` 对比：
+只看 `Kora` / `MyBatis-Plus` / `jOOQ` / `Jimmer` 对比：
 
 ```bash
-./gradlew :simple:jmh --args "SimpleMapperPerformanceBenchmark.(kora|myBatisPlus).* -wi 1 -i 3 -w 1s -r 1s -f 1"
+./gradlew :simple:jmh --args "SimpleMapperPerformanceBenchmark.(kora|myBatisPlus|jooq|jimmer).* -wi 1 -i 3 -w 1s -r 1s -f 1"
 ```
 
 说明：
@@ -493,8 +493,9 @@ Sql.deleteById(User.class, 1L);
 - 默认基准模式为 `Throughput`
 - 输出单位为 `ops/s`
 - 数据库使用内存 `H2`
-- 当前主对比维度是 `Kora` 与 `MyBatis-Plus`
-- `MyBatis` 基线仍保留在部分查询场景中，方便后续继续扩展
+- 当前主对比维度是 `Kora`、`MyBatis-Plus`、`jOOQ`、`Jimmer`
+- `MyBatis` 查询基线代码仍保留在基准类中，便于后续单独补跑
+- `updateById` 与 `deleteById` 场景会在基准过程中保证命中存在数据，避免退化为大量空操作
 
 ### 本地测试数据
 
@@ -505,27 +506,29 @@ Sql.deleteById(User.class, 1L);
 - `1` 线程
 - `1` 次预热 / `3` 次测量 / 每次 `1s`
 
-#### Kora vs MyBatis-Plus
+#### 四框架结果
 
-| 场景 | Kora (ops/s) | MyBatis-Plus (ops/s) | Kora 提升 |
-|---|---:|---:|---:|
-| `selectById` | 115,950 | 52,884 | 2.19x |
-| `insertOne` | 150,471 | 80,018 | 1.88x |
-| `updateById` | 157,653 | 34,766 | 4.54x |
-| `deleteById` | 214,782 | 35,865 | 5.99x |
-| `page` | 204.042 | 192.482 | 1.06x |
-| `batchInsert` | 2,926.059 | 1,445.284 | 2.02x |
+| 场景 | Kora (ops/s) | MyBatis-Plus (ops/s) | jOOQ (ops/s) | Jimmer (ops/s) |
+|---|---:|---:|---:|---:|
+| `selectById` | 120,852.775 | 59,485.562 | 86,938.233 | 80,443.975 |
+| `selectByAgeRange` | 9,279.977 | 954.470 | 8,619.618 | 12,916.445 |
+| `insertOne` | 150,727.385 | 45,405.326 | 91,497.395 | 58,856.993 |
+| `updateById` | 129,969.666 | 26,389.191 | 83,238.886 | 50,276.253 |
+| `deleteById` | 127,589.454 | 27,823.167 | 73,485.918 | 90,250.492 |
+| `page` | 5,774.166 | 4,526.751 | 4,906.532 | 5,329.895 |
+| `batchInsert` | 3,806.895 | 1,240.002 | 1,819.410 | 1,389.759 |
 
 批量写入按 `100 rows/batch` 折算吞吐：
 
-- `Kora`: `292,606 rows/s`
-- `MyBatis-Plus`: `144,528 rows/s`
+- `Kora`: `380,690 rows/s`
+- `MyBatis-Plus`: `124,000 rows/s`
+- `jOOQ`: `181,941 rows/s`
+- `Jimmer`: `138,976 rows/s`
 
-额外范围查询场景：
+当前这组本地结果下：
 
-| 场景 | Kora (ops/s) | MyBatis-Plus (ops/s) | Kora 提升 |
-|---|---:|---:|---:|
-| `selectByAgeRange` | 50.137 | 3.128 | 16.03x |
+- `Kora` 在 `selectById`、`insertOne`、`updateById`、`deleteById`、`page`、`batchInsert` 上最高
+- `Jimmer` 在 `selectByAgeRange` 上最高
 
 #### 图表
 
@@ -534,25 +537,31 @@ Sql.deleteById(User.class, 1L);
 xychart-beta
     title "CRUD Throughput (ops/s)"
     x-axis ["selectById", "insertOne", "updateById", "deleteById"]
-    y-axis "ops/s" 0 --> 220000
-    bar [115950, 150471, 157653, 214782]
-    bar [52884, 80018, 34766, 35865]
+    y-axis "ops/s" 0 --> 160000
+    bar [120853, 150727, 129970, 127589]
+    bar [59486, 45405, 26389, 27823]
+    bar [86938, 91497, 83239, 73486]
+    bar [80444, 58857, 50276, 90250]
 ```
 
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"background":"#0f172a","primaryColor":"#2563eb","secondaryColor":"#f97316","tertiaryColor":"#22c55e","primaryTextColor":"#e5e7eb","secondaryTextColor":"#e5e7eb","tertiaryTextColor":"#e5e7eb","lineColor":"#94a3b8","textColor":"#e5e7eb","mainBkg":"#0f172a","fontFamily":"ui-sans-serif"}}}%%
 xychart-beta
-    title "Page / Batch Throughput"
-    x-axis ["page", "batchInsert"]
-    y-axis "ops/s" 0 --> 3200
-    bar [204, 2926]
-    bar [192, 1445]
+    title "Range / Page / Batch Throughput (ops/s)"
+    x-axis ["selectByAgeRange", "page", "batchInsert"]
+    y-axis "ops/s" 0 --> 14000
+    bar [9280, 5774, 3807]
+    bar [954, 4527, 1240]
+    bar [8620, 4907, 1819]
+    bar [12916, 5330, 1390]
 ```
 
 图例：
 
 - 第一组柱状为 `Kora`
 - 第二组柱状为 `MyBatis-Plus`
+- 第三组柱状为 `jOOQ`
+- 第四组柱状为 `Jimmer`
 
 ## 项目结构
 

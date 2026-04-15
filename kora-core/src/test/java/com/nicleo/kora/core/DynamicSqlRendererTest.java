@@ -114,6 +114,40 @@ class DynamicSqlRendererTest {
     }
 
     @Test
+    void ifExpressionShouldSupportEnumOrdinalMethod() {
+        DynamicSqlNode root = SqlNodes.mixed(
+                SqlNodes.text("select * from user "),
+                SqlNodes.trim("WHERE", null, new String[]{"AND", "OR"}, new String[0],
+                        SqlNodes.ifNode("status != null and status.ordinal() == 1", SqlNodes.text(" and 6 = 6")))
+        );
+
+        BoundSql boundSql = DynamicSqlRenderer.render(root, Map.of(
+                "status", UserStatus.ACTIVE,
+                "_parameter", Map.of("status", UserStatus.ACTIVE)
+        ));
+
+        assertEquals("select * from user WHERE 6 = 6", boundSql.getSql());
+        assertArrayEquals(new Object[0], DynamicSqlArgumentResolver.resolve(boundSql));
+    }
+
+    @Test
+    void ifExpressionShouldSupportEnumNameMethod() {
+        DynamicSqlNode root = SqlNodes.mixed(
+                SqlNodes.text("select * from user "),
+                SqlNodes.trim("WHERE", null, new String[]{"AND", "OR"}, new String[0],
+                        SqlNodes.ifNode("status != null and status.name() == 'ACTIVE'", SqlNodes.text(" and 7 = 7")))
+        );
+
+        BoundSql boundSql = DynamicSqlRenderer.render(root, Map.of(
+                "status", UserStatus.ACTIVE,
+                "_parameter", Map.of("status", UserStatus.ACTIVE)
+        ));
+
+        assertEquals("select * from user WHERE 7 = 7", boundSql.getSql());
+        assertArrayEquals(new Object[0], DynamicSqlArgumentResolver.resolve(boundSql));
+    }
+
+    @Test
     void rendersForeachChooseAndBind() {
         DynamicSqlNode root = SqlNodes.mixed(
                 SqlNodes.bind("pattern", "'%' + name + '%'"),
@@ -154,6 +188,11 @@ class DynamicSqlRendererTest {
         int getAge() {
             return age;
         }
+    }
+
+    enum UserStatus {
+        INACTIVE,
+        ACTIVE
     }
 
     static final class UserReflector implements GeneratedReflector<User> {

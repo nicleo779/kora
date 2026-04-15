@@ -12,10 +12,12 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 public final class GeneratedRowMapper<T> implements RowMapper<T> {
     private final Class<T> entityType;
@@ -37,31 +39,21 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
     @Override
     public T mapRow(ResultSet resultSet) throws SQLException {
         ResultSetMetaData metaData = resultSet.getMetaData();
-        if (entityType.isRecord()) {
-            return mapRecord(resultSet, metaData);
+        Map<String, Object> values = readColumnValues(resultSet, metaData);
+        ParameterInfo[] params = constructorParams();
+        if (params.length == 0) {
+            T instance = reflector.newInstance();
+            applyValues(instance, values, Set.of());
+            return instance;
         }
-        T instance = reflector.newInstance();
-        for (int columnIndex = 1; columnIndex <= metaData.getColumnCount(); columnIndex++) {
-            String columnLabel = metaData.getColumnLabel(columnIndex);
-            String fieldName = resolveFieldName(columnLabel);
-            FieldInfo fieldInfo = reflector.getField(fieldName);
-            if (fieldInfo == null) {
-                continue;
-            }
-            Class<?> targetType = resolveTargetType(fieldInfo.type());
-            Object value;
-            if (targetType != null) {
-                value = typeConverter.cast(resultSet, columnIndex, targetType, columnLabel, fieldName);
-            } else {
-                value = resultSet.getObject(columnIndex);
-            }
-            reflector.set(instance, fieldName, value);
+        T instance = newInstanceFromConstructor(values, params);
+        if (!entityType.isRecord()) {
+            applyValues(instance, values, constructorParamNames(params));
         }
         return instance;
     }
 
-    private T mapRecord(ResultSet resultSet, ResultSetMetaData metaData) throws SQLException {
-        ParameterInfo[] params = constructorParams();
+    private Map<String, Object> readColumnValues(ResultSet resultSet, ResultSetMetaData metaData) throws SQLException {
         Map<String, Object> values = new HashMap<>();
         for (int columnIndex = 1; columnIndex <= metaData.getColumnCount(); columnIndex++) {
             String columnLabel = metaData.getColumnLabel(columnIndex);
@@ -79,6 +71,10 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
             }
             values.put(fieldName, value);
         }
+        return values;
+    }
+
+    private T newInstanceFromConstructor(Map<String, Object> values, ParameterInfo[] params) {
         Object[] args = new Object[params.length];
         for (int i = 0; i < params.length; i++) {
             args[i] = values.getOrDefault(params[i].name(), defaultValue(resolveTargetType(params[i].type())));
@@ -87,10 +83,33 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
     }
 
     private ParameterInfo[] constructorParams() {
-        if (reflector.getClassInfo() == null || reflector.getClassInfo().params() == null || reflector.getClassInfo().params().length == 0) {
+        if (reflector.getClassInfo() == null || reflector.getClassInfo().params() == null) {
+            if (entityType.isRecord()) {
+                throw new SqlExecutorException("No constructor metadata available for record type: " + entityType.getName());
+            }
+            return new ParameterInfo[0];
+        }
+        if (entityType.isRecord() && reflector.getClassInfo().params().length == 0) {
             throw new SqlExecutorException("No constructor metadata available for record type: " + entityType.getName());
         }
         return reflector.getClassInfo().params();
+    }
+
+    private void applyValues(T instance, Map<String, Object> values, Set<String> skipFields) {
+        for (Map.Entry<String, Object> entry : values.entrySet()) {
+            if (skipFields.contains(entry.getKey())) {
+                continue;
+            }
+            reflector.set(instance, entry.getKey(), entry.getValue());
+        }
+    }
+
+    private Set<String> constructorParamNames(ParameterInfo[] params) {
+        Set<String> names = new HashSet<>();
+        for (ParameterInfo param : params) {
+            names.add(param.name());
+        }
+        return names;
     }
 
     private String resolveFieldName(String columnLabel) {

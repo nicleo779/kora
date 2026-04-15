@@ -25,31 +25,15 @@ publishing {
     publications {
         create<MavenPublication>("mavenJava") {
             from(components["java"])
-            artifactId = "kora-core"
 
             pom {
-                name.set("kora-core")
+                name.set("kora-processor")
                 description.set(project.description)
-                url.set("https://github.com/nicleo/kora")
-
                 licenses {
                     license {
                         name.set("Apache License, Version 2.0")
                         url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
                     }
-                }
-
-                developers {
-                    developer {
-                        id.set("nicleo")
-                        name.set("nicleo")
-                    }
-                }
-
-                scm {
-                    url.set("https://github.com/nicleo/kora")
-                    connection.set("scm:git:https://github.com/nicleo/kora.git")
-                    developerConnection.set("scm:git:https://github.com/nicleo/kora.git")
                 }
             }
         }
@@ -58,14 +42,11 @@ publishing {
     repositories {
         mavenLocal()
         maven {
-            name = "repsy"
-            url = uri("https://repo.repsy.io/${providers.environmentVariable("REPSY_USERNAME").orElse("").get()}/public")
+            setUrl(providers.environmentVariable("MAVEN_URL").orElse("").get())
             credentials {
-                username = providers.gradleProperty("repsyUsername")
-                    .orElse(providers.environmentVariable("REPSY_USERNAME"))
+                username = providers.environmentVariable("MAVEN_USERNAME")
                     .orNull
-                password = providers.gradleProperty("repsyPassword")
-                    .orElse(providers.environmentVariable("REPSY_PASSWORD"))
+                password = providers.environmentVariable("MAVEN_PASSWORD")
                     .orNull
             }
         }

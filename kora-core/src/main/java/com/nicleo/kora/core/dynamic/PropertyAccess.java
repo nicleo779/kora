@@ -87,6 +87,8 @@ public final class PropertyAccess {
             case "size" -> sizeOf(target);
             case "length" -> sizeOf(target);
             case "isEmpty" -> isEmpty(target);
+            case "ordinal" -> ordinalOf(target);
+            case "name" -> nameOf(target);
             default -> throw new SqlExecutorException("Unsupported zero-arg method '" + methodName + "()' on type " + target.getClass().getName());
         };
     }
@@ -150,6 +152,20 @@ public final class PropertyAccess {
             return false;
         }
         throw new SqlExecutorException("Unsupported contains(...) on type " + target.getClass().getName());
+    }
+
+    private static int ordinalOf(Object target) {
+        if (target instanceof Enum<?> enumValue) {
+            return enumValue.ordinal();
+        }
+        throw new SqlExecutorException("Unsupported ordinal() on type " + target.getClass().getName());
+    }
+
+    private static String nameOf(Object target) {
+        if (target instanceof Enum<?> enumValue) {
+            return enumValue.name();
+        }
+        throw new SqlExecutorException("Unsupported name() on type " + target.getClass().getName());
     }
 
     private static boolean isSimpleValue(Object value) {
