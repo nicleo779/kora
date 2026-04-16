@@ -2,12 +2,12 @@ package com.nicleo.kora.core.runtime.jdbc;
 
 import com.nicleo.kora.core.runtime.ClassInfo;
 import com.nicleo.kora.core.runtime.FieldInfo;
+import com.nicleo.kora.core.runtime.AnnotationMeta;
 import com.nicleo.kora.core.runtime.GeneratedReflector;
 import com.nicleo.kora.core.runtime.ParameterInfo;
 import com.nicleo.kora.core.runtime.TypeConverter;
 import org.junit.jupiter.api.Test;
 
-import java.lang.annotation.Annotation;
 import java.lang.reflect.Proxy;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
@@ -91,7 +91,7 @@ class GeneratedRowMapperRecordTest {
     }
 
     private static final class PairRecordReflector implements GeneratedReflector<PairRecord> {
-        private static final Annotation[] NO_ANNOTATIONS = new Annotation[0];
+        private static final AnnotationMeta[] NO_ANNOTATIONS = new AnnotationMeta[0];
         private static final ParameterInfo[] PARAMS = new ParameterInfo[]{
                 new ParameterInfo("key", String.class, NO_ANNOTATIONS),
                 new ParameterInfo("value", Long.class, NO_ANNOTATIONS)
@@ -143,7 +143,7 @@ class GeneratedRowMapperRecordTest {
     }
 
     private static final class HybridUserReflector implements GeneratedReflector<HybridUser> {
-        private static final Annotation[] NO_ANNOTATIONS = new Annotation[0];
+        private static final AnnotationMeta[] NO_ANNOTATIONS = new AnnotationMeta[0];
         private static final ParameterInfo[] PARAMS = new ParameterInfo[]{
                 new ParameterInfo("id", String.class, NO_ANNOTATIONS)
         };

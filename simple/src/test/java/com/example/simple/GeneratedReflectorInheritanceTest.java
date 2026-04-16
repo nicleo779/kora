@@ -1,10 +1,9 @@
 package com.example.simple;
 
 import com.example.simple.inheritance.AdminUser;
-import com.example.simple.inheritance.AdminUserReflector;
 import com.example.simple.inheritance.BaseUser;
-import com.example.simple.inheritance.BaseUserReflector;
 import com.example.simple.inheritance.TestReflectTag;
+import com.nicleo.kora.core.runtime.AnnotationMeta;
 import com.nicleo.kora.core.runtime.ClassInfo;
 import com.nicleo.kora.core.runtime.GeneratedReflector;
 import com.nicleo.kora.core.runtime.GeneratedReflectors;
@@ -21,19 +20,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GeneratedReflectorInheritanceTest {
     @BeforeAll
+    @SuppressWarnings("unchecked")
     static void installReflectors() {
         GeneratedReflectors.clear();
         GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
             @Override
-            @SuppressWarnings("unchecked")
             public <T> GeneratedReflector<T> get(Class<T> type) {
-                if (type == BaseUser.class) {
-                    return (GeneratedReflector<T>) new BaseUserReflector();
+                try {
+                    return (GeneratedReflector<T>) Class
+                            .forName(GeneratedTypeNames.reflectorTypeName(type))
+                            .getConstructor()
+                            .newInstance();
+                } catch (ReflectiveOperationException ex) {
+                    throw new IllegalArgumentException("Unknown type: " + type.getName(), ex);
                 }
-                if (type == AdminUser.class) {
-                    return (GeneratedReflector<T>) new AdminUserReflector();
-                }
-                throw new IllegalArgumentException("Unknown type: " + type.getName());
             }
         });
     }
@@ -51,12 +51,11 @@ class GeneratedReflectorInheritanceTest {
         assertEquals(AdminUser.class, classInfo.type());
         assertEquals(BaseUser.class, classInfo.superType());
 
-        TestReflectTag tag = Arrays.stream(classInfo.annotations())
-                .filter(TestReflectTag.class::isInstance)
-                .map(TestReflectTag.class::cast)
+        AnnotationMeta tag = Arrays.stream(classInfo.annotations())
+                .filter(annotation -> annotation.type().equals(TestReflectTag.class.getName()))
                 .findFirst()
                 .orElseThrow();
-        assertEquals("admin", tag.value());
+        assertEquals("admin", tag.value("value"));
 
         assertEquals(7L, reflector.get(user, "id"));
         assertEquals("admin", reflector.get(user, "role"));

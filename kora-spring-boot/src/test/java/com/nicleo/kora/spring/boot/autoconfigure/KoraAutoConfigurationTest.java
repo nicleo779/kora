@@ -449,8 +449,8 @@ class KoraAutoConfigurationTest {
         @Override
         public FieldInfo getField(String field) {
             return switch (field) {
-                case "id" -> new FieldInfo("id", Long.class, 0, null, new java.lang.annotation.Annotation[0]);
-                case "name" -> new FieldInfo("name", String.class, 0, null, new java.lang.annotation.Annotation[0]);
+                case "id" -> new FieldInfo("id", Long.class, 0, null, new com.nicleo.kora.core.runtime.AnnotationMeta[0]);
+                case "name" -> new FieldInfo("name", String.class, 0, null, new com.nicleo.kora.core.runtime.AnnotationMeta[0]);
                 default -> null;
             };
         }

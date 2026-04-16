@@ -696,7 +696,7 @@ class BaseMapperImplIdStrategyTest {
 
         @Override
         public FieldInfo getField(String field) {
-            return "id".equals(field) ? new FieldInfo("id", Long.class, 2, null, new java.lang.annotation.Annotation[0]) : null;
+            return "id".equals(field) ? new FieldInfo("id", Long.class, 2, null, new com.nicleo.kora.core.runtime.AnnotationMeta[0]) : null;
         }
     }
 }
