@@ -17,8 +17,8 @@ final class GeneratedSupportScanner {
     private static final Pattern REFLECTOR_PATTERN = Pattern.compile("implements\\s+GeneratedReflector<\\s*([\\w.$]+)\\s*>");
     private static final Pattern TABLE_PATTERN = Pattern.compile("extends\\s+EntityTable<\\s*([\\w.$]+)\\s*>");
 
-    SupportRegistrations scan(Path supportSourcePath, String supportPackage, List<String> scanPackages) throws IOException {
-        Path scanRoot = resolveScanRoot(supportSourcePath, supportPackage, scanPackages);
+    SupportRegistrations scan(Path supportSourcePath) throws IOException {
+        Path scanRoot = resolveScanRoot(supportSourcePath);
         if (scanRoot == null || !Files.isDirectory(scanRoot)) {
             return new SupportRegistrations(List.of(), List.of());
         }
@@ -33,58 +33,8 @@ final class GeneratedSupportScanner {
         return new SupportRegistrations(new ArrayList<>(reflectors.values()), new ArrayList<>(tables.values()));
     }
 
-    private Path resolveScanRoot(Path supportSourcePath, String supportPackage, List<String> scanPackages) {
-        Path parent = supportSourcePath.getParent();
-        if (parent == null) {
-            return null;
-        }
-
-        int packageDepth = supportPackage.isBlank() ? 0 : supportPackage.split("\\.").length;
-        Path sourceOutputRoot = parent;
-        for (int i = 0; i < packageDepth; i++) {
-            sourceOutputRoot = sourceOutputRoot.getParent();
-            if (sourceOutputRoot == null) {
-                return null;
-            }
-        }
-
-        String scanRootPackage = commonPackagePrefix(scanPackages);
-        if (scanRootPackage.isBlank()) {
-            return sourceOutputRoot;
-        }
-        Path scanRoot = sourceOutputRoot;
-        for (String segment : scanRootPackage.split("\\.")) {
-            scanRoot = scanRoot.resolve(segment);
-        }
-        return scanRoot;
-    }
-
-    private String commonPackagePrefix(List<String> packages) {
-        String prefix = "";
-        for (String packageName : packages) {
-            if (packageName == null || packageName.isBlank()) {
-                continue;
-            }
-            prefix = prefix.isEmpty() ? packageName : sharedPackagePrefix(prefix, packageName);
-            if (prefix.isEmpty()) {
-                return "";
-            }
-        }
-        return prefix;
-    }
-
-    private String sharedPackagePrefix(String left, String right) {
-        String[] leftSegments = left.split("\\.");
-        String[] rightSegments = right.split("\\.");
-        int shared = Math.min(leftSegments.length, rightSegments.length);
-        int index = 0;
-        while (index < shared && leftSegments[index].equals(rightSegments[index])) {
-            index++;
-        }
-        if (index == 0) {
-            return "";
-        }
-        return String.join(".", java.util.Arrays.copyOf(leftSegments, index));
+    private Path resolveScanRoot(Path supportSourcePath) {
+        return supportSourcePath.getParent();
     }
 
     private boolean isGeneratedRegistrationSource(Path path) {

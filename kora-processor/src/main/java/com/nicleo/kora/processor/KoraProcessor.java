@@ -721,7 +721,7 @@ public class KoraProcessor extends AbstractProcessor {
         }
 
         mergeGeneratedSupportRegistrations(scanSpec, supportFileObject, reflectorRegistrations, tableRegistrations);
-        String packageName = generatedPackageName(packageNameOf(scanSpec.configType()));
+        String packageName = GENERATED_PACKAGE_PREFIX;
         String simpleName = supportSimpleName(scanSpec);
         String packageBlock = packageName.isEmpty() ? "" : "package %s;%n%n".formatted(packageName);
         String registrations = String.join("", reflectorRegistrations.values());
@@ -757,11 +757,7 @@ public class KoraProcessor extends AbstractProcessor {
                 return;
             }
             Path supportSourcePath = Path.of(supportFileObject.toUri());
-            GeneratedSupportScanner.SupportRegistrations registrations = generatedSupportScanner.scan(
-                    supportSourcePath,
-                    packageNameOf(scanSpec.configType),
-                    supportScanPackages(scanSpec)
-            );
+            GeneratedSupportScanner.SupportRegistrations registrations = generatedSupportScanner.scan(supportSourcePath);
             for (GeneratedSupportScanner.ReflectRegistration registration : registrations.reflectors()) {
                 if (elements.getTypeElement(registration.entityTypeName()) == null) {
                     continue;
@@ -784,17 +780,6 @@ public class KoraProcessor extends AbstractProcessor {
             }
         } catch (Exception ignored) {
         }
-    }
-
-    private List<String> supportScanPackages(ScanSpec scanSpec) {
-        List<String> packages = new ArrayList<>();
-        String configPackage = packageNameOf(scanSpec.configType);
-        if (!configPackage.isBlank()) {
-            packages.add(configPackage);
-        }
-        packages.addAll(scanSpec.entityPackages);
-        packages.addAll(scanSpec.mapperPackages);
-        return packages;
     }
 
     private boolean isListReturn(TypeMirror returnType) {
@@ -1605,10 +1590,6 @@ public class KoraProcessor extends AbstractProcessor {
         return packageElement.isUnnamed() ? "" : packageElement.getQualifiedName().toString();
     }
 
-    private String generatedPackageName(String packageName) {
-        return packageName.isEmpty() ? GENERATED_PACKAGE_PREFIX : GENERATED_PACKAGE_PREFIX + "." + packageName;
-    }
-
     private String generatedModelPackageName(TypeElement typeElement) {
         return GENERATED_PACKAGE_PREFIX + "." + packageHashSegment(packageNameOf(typeElement));
     }
@@ -1699,7 +1680,7 @@ public class KoraProcessor extends AbstractProcessor {
     }
 
     private String supportClassName(ScanSpec scanSpec) {
-        String packageName = generatedPackageName(packageNameOf(scanSpec.configType));
+        String packageName = GENERATED_PACKAGE_PREFIX;
         String simpleName = supportSimpleName(scanSpec);
         return packageName + "." + simpleName;
     }
