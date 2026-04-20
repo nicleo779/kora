@@ -1,5 +1,6 @@
 package com.example.simple.mapper;
 
+import com.example.simple.TestMapperTag;
 import com.example.simple.common.ReadMapper;
 import com.example.simple.common.WriteMapper;
 import com.example.simple.dto.UserFilter;
@@ -14,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 
 public interface UserMapper extends ReadMapper<User>, WriteMapper<User> {
+    @TestMapperTag("selectById")
     User selectById(Long id);
 
     List<User> selectByAgeRange(Integer minAge, Integer maxAge);

@@ -15,18 +15,25 @@ import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
+import javax.lang.model.element.AnnotationMirror;
+import javax.lang.model.element.AnnotationValue;
+import javax.lang.model.element.Element;
 import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.ArrayType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Types;
+import java.lang.annotation.RetentionPolicy;
+import java.util.ArrayList;
 import java.util.List;
 
 final class MapperImplClassGenerator {
     private static final String SQL_EXECUTOR_DESC = "Lcom/nicleo/kora/core/runtime/SqlExecutor;";
     private static final String DYNAMIC_SQL_NODE_DESC = "Lcom/nicleo/kora/core/dynamic/DynamicSqlNode;";
+    private static final String ANNOTATION_META = "com/nicleo/kora/core/runtime/AnnotationMeta";
+    private static final String ANNOTATION_META_DESC = "Lcom/nicleo/kora/core/runtime/AnnotationMeta;";
     private static final String GENERATED_MAPPER_SUPPORT = "com/nicleo/kora/core/runtime/GeneratedMapperSupport";
     private static final String SQL_NODES = "com/nicleo/kora/core/dynamic/SqlNodes";
 
@@ -49,12 +56,15 @@ final class MapperImplClassGenerator {
         cw.visit(Opcodes.V21, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, classInternalName, null, "java/lang/Object", new String[]{mapperInternalName});
 
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "sqlExecutor", SQL_EXECUTOR_DESC, null, null).visitEnd();
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "NO_ANNOTATIONS", "[" + ANNOTATION_META_DESC, null, null).visitEnd();
         for (KoraProcessor.MapperCapabilityDelegateSpec delegate : capabilityDelegates) {
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, delegate.fieldName(), AsmUtils.descriptor(delegate.interfaceErasedTypeLiteral()), null, null).visitEnd();
         }
         for (KoraProcessor.MapperMethodSpec mapperMethod : mapperMethods) {
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL,
                     context.statementFieldName(mapperMethod.statement().id()), DYNAMIC_SQL_NODE_DESC, null, null).visitEnd();
+            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL,
+                    methodAnnotationsFieldName(mapperMethod.statement().id()), "[" + ANNOTATION_META_DESC, null, null).visitEnd();
         }
 
         writeClinit(cw, classInternalName, mapperMethods);
@@ -76,7 +86,12 @@ final class MapperImplClassGenerator {
     private void writeClinit(ClassWriter cw, String classInternalName, List<KoraProcessor.MapperMethodSpec> mapperMethods) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
         mv.visitCode();
+        AsmUtils.pushInt(mv, 0);
+        mv.visitTypeInsn(Opcodes.ANEWARRAY, ANNOTATION_META);
+        mv.visitFieldInsn(Opcodes.PUTSTATIC, classInternalName, "NO_ANNOTATIONS", "[" + ANNOTATION_META_DESC);
         for (KoraProcessor.MapperMethodSpec mapperMethod : mapperMethods) {
+            emitMethodAnnotationArray(mv, mapperMethod.method().getAnnotationMirrors(), classInternalName);
+            mv.visitFieldInsn(Opcodes.PUTSTATIC, classInternalName, methodAnnotationsFieldName(mapperMethod.statement().id()), "[" + ANNOTATION_META_DESC);
             emitDynamicSqlNode(mv, mapperMethod.statement().rootSqlNode());
             mv.visitFieldInsn(Opcodes.PUTSTATIC, classInternalName, context.statementFieldName(mapperMethod.statement().id()), DYNAMIC_SQL_NODE_DESC);
         }
@@ -156,6 +171,7 @@ final class MapperImplClassGenerator {
         mv.visitFieldInsn(Opcodes.GETFIELD, classInternalName, "sqlExecutor", SQL_EXECUTOR_DESC);
         mv.visitLdcInsn(mapperType.getQualifiedName().toString());
         mv.visitLdcInsn(statement.id());
+        mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, methodAnnotationsFieldName(statement.id()), "[" + ANNOTATION_META_DESC);
         mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, context.statementFieldName(statement.id()), DYNAMIC_SQL_NODE_DESC);
         mv.visitVarInsn(Opcodes.ALOAD, namesLocal);
         mv.visitVarInsn(Opcodes.ALOAD, valuesLocal);
@@ -166,17 +182,17 @@ final class MapperImplClassGenerator {
                 mv.visitVarInsn(Opcodes.ALOAD, pagingIndex);
                 AsmUtils.pushClassLiteral(mv, context.extractPageElementType(method.getReturnType()), context.types());
                 mv.visitMethodInsn(Opcodes.INVOKESTATIC, GENERATED_MAPPER_SUPPORT, "selectPage",
-                        "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;" + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;Lcom/nicleo/kora/core/query/Paging;Ljava/lang/Class;)Lcom/nicleo/kora/core/query/Page;", false);
+                        "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;[" + ANNOTATION_META_DESC + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;Lcom/nicleo/kora/core/query/Paging;Ljava/lang/Class;)Lcom/nicleo/kora/core/query/Page;", false);
                 mv.visitInsn(Opcodes.ARETURN);
             } else if (context.isListReturn(method.getReturnType())) {
                 AsmUtils.pushClassLiteral(mv, context.extractListElementType(method.getReturnType()), context.types());
                 mv.visitMethodInsn(Opcodes.INVOKESTATIC, GENERATED_MAPPER_SUPPORT, "selectList",
-                        "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;" + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;Ljava/lang/Class;)Ljava/util/List;", false);
+                        "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;[" + ANNOTATION_META_DESC + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;Ljava/lang/Class;)Ljava/util/List;", false);
                 mv.visitInsn(Opcodes.ARETURN);
             } else {
                 AsmUtils.pushClassLiteral(mv, method.getReturnType(), context.types());
                 mv.visitMethodInsn(Opcodes.INVOKESTATIC, GENERATED_MAPPER_SUPPORT, "selectOne",
-                        "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;" + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;Ljava/lang/Class;)Ljava/lang/Object;", false);
+                        "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;[" + ANNOTATION_META_DESC + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;Ljava/lang/Class;)Ljava/lang/Object;", false);
                 if (context.types().erasure(method.getReturnType()).getKind() != TypeKind.VOID) {
                     mv.visitTypeInsn(Opcodes.CHECKCAST, org.objectweb.asm.Type.getType(AsmUtils.descriptor(method.getReturnType(), context.types())).getInternalName());
                 }
@@ -185,7 +201,7 @@ final class MapperImplClassGenerator {
         } else {
             mv.visitFieldInsn(Opcodes.GETSTATIC, "com/nicleo/kora/core/xml/SqlCommandType", statement.commandType().name(), "Lcom/nicleo/kora/core/xml/SqlCommandType;");
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, GENERATED_MAPPER_SUPPORT, "update",
-                    "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;Lcom/nicleo/kora/core/xml/SqlCommandType;" + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;)I", false);
+                    "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;[" + ANNOTATION_META_DESC + "Lcom/nicleo/kora/core/xml/SqlCommandType;" + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;)I", false);
             if (method.getReturnType().getKind() == TypeKind.INT) {
                 mv.visitInsn(Opcodes.IRETURN);
             } else {
@@ -291,6 +307,201 @@ final class MapperImplClassGenerator {
             mv.visitInsn(Opcodes.AASTORE);
             localIndex += AsmUtils.slotSize(parameter.asType());
         }
+    }
+
+    private String methodAnnotationsFieldName(String statementId) {
+        return context.statementFieldName(statementId) + "_ANNOTATIONS";
+    }
+
+    private void emitMethodAnnotationArray(MethodVisitor mv, List<? extends AnnotationMirror> annotations, String classInternalName) {
+        List<? extends AnnotationMirror> includedAnnotations = annotations.stream()
+                .filter(this::isRuntimeVisibleAnnotation)
+                .toList();
+        if (includedAnnotations.isEmpty()) {
+            mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, "NO_ANNOTATIONS", "[" + ANNOTATION_META_DESC);
+            return;
+        }
+        AsmUtils.pushInt(mv, includedAnnotations.size());
+        mv.visitTypeInsn(Opcodes.ANEWARRAY, ANNOTATION_META);
+        for (int i = 0; i < includedAnnotations.size(); i++) {
+            mv.visitInsn(Opcodes.DUP);
+            AsmUtils.pushInt(mv, i);
+            emitAnnotationMeta(mv, includedAnnotations.get(i), classInternalName);
+            mv.visitInsn(Opcodes.AASTORE);
+        }
+    }
+
+    private void emitAnnotationMeta(MethodVisitor mv, AnnotationMirror annotationMirror, String classInternalName) {
+        TypeElement annotationType = (TypeElement) annotationMirror.getAnnotationType().asElement();
+        List<ExecutableElement> attributes = new ArrayList<>();
+        for (Element enclosed : annotationType.getEnclosedElements()) {
+            if (enclosed instanceof ExecutableElement method) {
+                attributes.add(method);
+            }
+        }
+        mv.visitTypeInsn(Opcodes.NEW, ANNOTATION_META);
+        mv.visitInsn(Opcodes.DUP);
+        mv.visitLdcInsn(annotationType.getQualifiedName().toString());
+        emitMap(mv, attributes.size(), index -> {
+            ExecutableElement method = attributes.get(index);
+            mv.visitLdcInsn(method.getSimpleName().toString());
+            emitAnnotationValueObject(mv, annotationValue(annotationMirror, method), method.getReturnType(), classInternalName);
+        });
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, ANNOTATION_META, "<init>", "(Ljava/lang/String;Ljava/util/Map;)V", false);
+    }
+
+    private void emitMap(MethodVisitor mv, int size, java.util.function.IntConsumer entryEmitter) {
+        if (size == 0) {
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Map", "of", "()Ljava/util/Map;", true);
+            return;
+        }
+        AsmUtils.pushInt(mv, size);
+        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/util/Map$Entry");
+        for (int i = 0; i < size; i++) {
+            mv.visitInsn(Opcodes.DUP);
+            AsmUtils.pushInt(mv, i);
+            entryEmitter.accept(i);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Map", "entry", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/util/Map$Entry;", true);
+            mv.visitInsn(Opcodes.AASTORE);
+        }
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Map", "ofEntries", "([Ljava/util/Map$Entry;)Ljava/util/Map;", true);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void emitAnnotationValueObject(MethodVisitor mv, AnnotationValue value, TypeMirror expectedType, String classInternalName) {
+        Object raw = value.getValue();
+        switch (expectedType.getKind()) {
+            case BOOLEAN -> mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Boolean", "valueOf", "(Z)Ljava/lang/Boolean;", false);
+            case BYTE -> mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Byte", "valueOf", "(B)Ljava/lang/Byte;", false);
+            case SHORT -> mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Short", "valueOf", "(S)Ljava/lang/Short;", false);
+            case INT -> mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Integer", "valueOf", "(I)Ljava/lang/Integer;", false);
+            case LONG -> mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Long", "valueOf", "(J)Ljava/lang/Long;", false);
+            case CHAR -> mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Character", "valueOf", "(C)Ljava/lang/Character;", false);
+            case FLOAT -> mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Float", "valueOf", "(F)Ljava/lang/Float;", false);
+            case DOUBLE -> mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Double", "valueOf", "(D)Ljava/lang/Double;", false);
+            case ARRAY -> emitAnnotationArrayValue(mv, (List<? extends AnnotationValue>) raw, (ArrayType) expectedType, classInternalName);
+            default -> emitDeclaredAnnotationValue(mv, raw, classInternalName);
+        }
+    }
+
+    private void emitAnnotationArrayValue(MethodVisitor mv, List<? extends AnnotationValue> values, ArrayType arrayType, String classInternalName) {
+        AsmUtils.pushInt(mv, values.size());
+        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
+        for (int i = 0; i < values.size(); i++) {
+            mv.visitInsn(Opcodes.DUP);
+            AsmUtils.pushInt(mv, i);
+            emitAnnotationValueObject(mv, values.get(i), arrayType.getComponentType(), classInternalName);
+            mv.visitInsn(Opcodes.AASTORE);
+        }
+    }
+
+    private void emitDeclaredAnnotationValue(MethodVisitor mv, Object raw, String classInternalName) {
+        if (raw instanceof String stringValue) {
+            mv.visitLdcInsn(stringValue);
+            return;
+        }
+        if (raw instanceof Character charValue) {
+            mv.visitLdcInsn((int) charValue);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Character", "valueOf", "(C)Ljava/lang/Character;", false);
+            return;
+        }
+        if (raw instanceof TypeMirror typeMirror) {
+            mv.visitLdcInsn(typeMirror.toString());
+            return;
+        }
+        if (raw instanceof VariableElement enumConstant) {
+            TypeElement owner = (TypeElement) enumConstant.getEnclosingElement();
+            mv.visitLdcInsn(owner.getQualifiedName() + "." + enumConstant.getSimpleName());
+            return;
+        }
+        if (raw instanceof AnnotationMirror annotationMirror) {
+            emitAnnotationMeta(mv, annotationMirror, classInternalName);
+            return;
+        }
+        emitObjectLiteral(mv, raw);
+    }
+
+    private boolean isRuntimeVisibleAnnotation(AnnotationMirror annotationMirror) {
+        Element element = annotationMirror.getAnnotationType().asElement();
+        if (!(element instanceof TypeElement annotationType)) {
+            return false;
+        }
+        for (AnnotationMirror meta : annotationType.getAnnotationMirrors()) {
+            if (!meta.getAnnotationType().toString().equals("java.lang.annotation.Retention")) {
+                continue;
+            }
+            for (AnnotationValue value : meta.getElementValues().values()) {
+                Object raw = value.getValue();
+                if (raw instanceof VariableElement retentionValue) {
+                    return retentionValue.getSimpleName().contentEquals(RetentionPolicy.RUNTIME.name());
+                }
+            }
+        }
+        return false;
+    }
+
+    private AnnotationValue annotationValue(AnnotationMirror annotationMirror, ExecutableElement method) {
+        AnnotationValue value = annotationMirror.getElementValues().get(method);
+        if (value != null) {
+            return value;
+        }
+        AnnotationValue defaultValue = method.getDefaultValue();
+        if (defaultValue == null) {
+            throw new IllegalArgumentException("Missing annotation value for " + method.getSimpleName() + " on " + annotationMirror);
+        }
+        return defaultValue;
+    }
+
+    private void emitObjectLiteral(MethodVisitor mv, Object raw) {
+        if (raw == null) {
+            mv.visitInsn(Opcodes.ACONST_NULL);
+            return;
+        }
+        if (raw instanceof String stringValue) {
+            mv.visitLdcInsn(stringValue);
+            return;
+        }
+        if (raw instanceof Boolean booleanValue) {
+            mv.visitInsn(booleanValue ? Opcodes.ICONST_1 : Opcodes.ICONST_0);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Boolean", "valueOf", "(Z)Ljava/lang/Boolean;", false);
+            return;
+        }
+        if (raw instanceof Byte byteValue) {
+            mv.visitIntInsn(Opcodes.BIPUSH, byteValue);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Byte", "valueOf", "(B)Ljava/lang/Byte;", false);
+            return;
+        }
+        if (raw instanceof Short shortValue) {
+            mv.visitIntInsn(Opcodes.SIPUSH, shortValue);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Short", "valueOf", "(S)Ljava/lang/Short;", false);
+            return;
+        }
+        if (raw instanceof Integer intValue) {
+            AsmUtils.pushInt(mv, intValue);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Integer", "valueOf", "(I)Ljava/lang/Integer;", false);
+            return;
+        }
+        if (raw instanceof Long longValue) {
+            mv.visitLdcInsn(longValue);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Long", "valueOf", "(J)Ljava/lang/Long;", false);
+            return;
+        }
+        if (raw instanceof Float floatValue) {
+            mv.visitLdcInsn(floatValue);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Float", "valueOf", "(F)Ljava/lang/Float;", false);
+            return;
+        }
+        if (raw instanceof Double doubleValue) {
+            mv.visitLdcInsn(doubleValue);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Double", "valueOf", "(D)Ljava/lang/Double;", false);
+            return;
+        }
+        if (raw instanceof Character charValue) {
+            mv.visitLdcInsn((int) charValue);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Character", "valueOf", "(C)Ljava/lang/Character;", false);
+            return;
+        }
+        mv.visitLdcInsn(String.valueOf(raw));
     }
 
     private void emitDynamicSqlNode(MethodVisitor mv, DynamicSqlNode node) {

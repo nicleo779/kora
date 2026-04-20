@@ -18,6 +18,7 @@ public final class GeneratedMapperSupport {
     public static <T> T selectOne(SqlExecutor sqlExecutor,
                                   String mapperClassName,
                                   String statementId,
+                                  AnnotationMeta[] mapperMethodAnnotations,
                                   DynamicSqlNode sqlNode,
                                   String[] parameterNames,
                                   Object[] parameterValues,
@@ -31,6 +32,8 @@ public final class GeneratedMapperSupport {
                 SqlCommandType.SELECT,
                 resultType,
                 null,
+                null,
+                mapperMethodAnnotations,
                 true
         );
         return sqlExecutor.selectOne(boundSql.getSql(), DynamicSqlArgumentResolver.resolve(boundSql), context, resultType);
@@ -39,6 +42,7 @@ public final class GeneratedMapperSupport {
     public static <T> List<T> selectList(SqlExecutor sqlExecutor,
                                          String mapperClassName,
                                          String statementId,
+                                         AnnotationMeta[] mapperMethodAnnotations,
                                          DynamicSqlNode sqlNode,
                                          String[] parameterNames,
                                          Object[] parameterValues,
@@ -52,6 +56,8 @@ public final class GeneratedMapperSupport {
                 SqlCommandType.SELECT,
                 resultType,
                 null,
+                null,
+                mapperMethodAnnotations,
                 true
         );
         return sqlExecutor.selectList(boundSql.getSql(), DynamicSqlArgumentResolver.resolve(boundSql), context, resultType);
@@ -60,6 +66,7 @@ public final class GeneratedMapperSupport {
     public static <T> Page<T> selectPage(SqlExecutor sqlExecutor,
                                          String mapperClassName,
                                          String statementId,
+                                         AnnotationMeta[] mapperMethodAnnotations,
                                          DynamicSqlNode sqlNode,
                                          String[] parameterNames,
                                          Object[] parameterValues,
@@ -74,6 +81,8 @@ public final class GeneratedMapperSupport {
                 SqlCommandType.SELECT,
                 resultType,
                 paging,
+                null,
+                mapperMethodAnnotations,
                 true
         );
         return sqlExecutor.getSqlPagingSupport().page(
@@ -89,6 +98,7 @@ public final class GeneratedMapperSupport {
     public static int update(SqlExecutor sqlExecutor,
                              String mapperClassName,
                              String statementId,
+                             AnnotationMeta[] mapperMethodAnnotations,
                              SqlCommandType commandType,
                              DynamicSqlNode sqlNode,
                              String[] parameterNames,
@@ -102,6 +112,8 @@ public final class GeneratedMapperSupport {
                 commandType,
                 null,
                 null,
+                null,
+                mapperMethodAnnotations,
                 true
         );
         return sqlExecutor.update(boundSql.getSql(), DynamicSqlArgumentResolver.resolve(boundSql), context);

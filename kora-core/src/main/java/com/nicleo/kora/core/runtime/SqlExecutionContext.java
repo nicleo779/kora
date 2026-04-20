@@ -6,6 +6,8 @@ import com.nicleo.kora.core.xml.SqlCommandType;
 import java.util.Objects;
 
 public final class SqlExecutionContext {
+    private static final AnnotationMeta[] NO_ANNOTATIONS = new AnnotationMeta[0];
+
     private final SqlExecutor sqlExecutor;
     private final String mapperClassName;
     private final String statementId;
@@ -13,17 +15,30 @@ public final class SqlExecutionContext {
     private final Class<?> resultType;
     private final Paging paging;
     private final SqlRequest countRequest;
+    private final AnnotationMeta[] mapperMethodAnnotations;
     private final boolean interceptorEnabled;
 
     public SqlExecutionContext(SqlExecutor sqlExecutor, String mapperClassName, String statementId, SqlCommandType commandType, Class<?> resultType, boolean interceptorEnabled) {
-        this(sqlExecutor, mapperClassName, statementId, commandType, resultType, null, null, interceptorEnabled);
+        this(sqlExecutor, mapperClassName, statementId, commandType, resultType, null, null, NO_ANNOTATIONS, interceptorEnabled);
     }
 
     public SqlExecutionContext(SqlExecutor sqlExecutor, String mapperClassName, String statementId, SqlCommandType commandType, Class<?> resultType, Paging paging, boolean interceptorEnabled) {
-        this(sqlExecutor, mapperClassName, statementId, commandType, resultType, paging, null, interceptorEnabled);
+        this(sqlExecutor, mapperClassName, statementId, commandType, resultType, paging, null, NO_ANNOTATIONS, interceptorEnabled);
     }
 
     public SqlExecutionContext(SqlExecutor sqlExecutor, String mapperClassName, String statementId, SqlCommandType commandType, Class<?> resultType, Paging paging, SqlRequest countRequest, boolean interceptorEnabled) {
+        this(sqlExecutor, mapperClassName, statementId, commandType, resultType, paging, countRequest, NO_ANNOTATIONS, interceptorEnabled);
+    }
+
+    public SqlExecutionContext(SqlExecutor sqlExecutor,
+                               String mapperClassName,
+                               String statementId,
+                               SqlCommandType commandType,
+                               Class<?> resultType,
+                               Paging paging,
+                               SqlRequest countRequest,
+                               AnnotationMeta[] mapperMethodAnnotations,
+                               boolean interceptorEnabled) {
         this.sqlExecutor = sqlExecutor;
         this.mapperClassName = mapperClassName;
         this.statementId = statementId;
@@ -31,23 +46,26 @@ public final class SqlExecutionContext {
         this.resultType = resultType;
         this.paging = paging;
         this.countRequest = countRequest;
+        this.mapperMethodAnnotations = mapperMethodAnnotations == null || mapperMethodAnnotations.length == 0
+                ? NO_ANNOTATIONS
+                : mapperMethodAnnotations.clone();
         this.interceptorEnabled = interceptorEnabled;
     }
 
     public static SqlExecutionContext select(SqlExecutor sqlExecutor, Class<?> resultType) {
-        return new SqlExecutionContext(sqlExecutor, null, null, SqlCommandType.SELECT, resultType, null, true);
+        return new SqlExecutionContext(sqlExecutor, null, null, SqlCommandType.SELECT, resultType, null, null, NO_ANNOTATIONS, true);
     }
 
     public static SqlExecutionContext update(SqlExecutor sqlExecutor) {
-        return new SqlExecutionContext(sqlExecutor, null, null, SqlCommandType.UPDATE, null, null, true);
+        return new SqlExecutionContext(sqlExecutor, null, null, SqlCommandType.UPDATE, null, null, null, NO_ANNOTATIONS, true);
     }
 
     public SqlExecutionContext withSqlExecutor(SqlExecutor sqlExecutor) {
-        return new SqlExecutionContext(sqlExecutor, mapperClassName, statementId, commandType, resultType, paging, countRequest, interceptorEnabled);
+        return new SqlExecutionContext(sqlExecutor, mapperClassName, statementId, commandType, resultType, paging, countRequest, mapperMethodAnnotations, interceptorEnabled);
     }
 
     public SqlExecutionContext withoutInterceptors() {
-        return new SqlExecutionContext(sqlExecutor, mapperClassName, statementId, commandType, resultType, paging, countRequest, false);
+        return new SqlExecutionContext(sqlExecutor, mapperClassName, statementId, commandType, resultType, paging, countRequest, mapperMethodAnnotations, false);
     }
 
     public SqlExecutor getSqlExecutor() {
@@ -80,5 +98,26 @@ public final class SqlExecutionContext {
 
     public boolean isInterceptorEnabled() {
         return interceptorEnabled;
+    }
+
+    public AnnotationMeta[] getMapperMethodAnnotations() {
+        return mapperMethodAnnotations.clone();
+    }
+
+    public AnnotationMeta getMapperMethodAnnotation(String annotationType) {
+        if (annotationType == null || annotationType.isBlank()) {
+            return null;
+        }
+        for (AnnotationMeta annotationMeta : mapperMethodAnnotations) {
+            if (annotationType.equals(annotationMeta.type())) {
+                return annotationMeta;
+            }
+        }
+        return null;
+    }
+
+    public AnnotationMeta getMapperMethodAnnotation(Class<?> annotationType) {
+        Objects.requireNonNull(annotationType, "annotationType");
+        return getMapperMethodAnnotation(annotationType.getName());
     }
 }
