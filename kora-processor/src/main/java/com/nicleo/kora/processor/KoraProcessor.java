@@ -312,7 +312,36 @@ public class KoraProcessor extends AbstractProcessor {
             changed |= upsertScanSpec(new ScanSpec(configType, mapperXmlRoots, List.of(scan.entity()), List.of(scan.mapper())));
         }
         for (Element rootElement : roundEnv.getRootElements()) {
-            collectScanTypes(rootElement);
+            changed |= collectScanTypes(rootElement);
+        }
+        // Enumerate entities/mappers from the compilation classpath so we
+        // don't rely solely on javac's current round. This makes incremental
+        // builds (and future Maven support) find types defined in unchanged
+        // source files or in dependency jars.
+        LinkedHashSet<String> packages = new LinkedHashSet<>();
+        for (ScanSpec scanSpec : scanSpecs) {
+            packages.addAll(scanSpec.entityPackages);
+            packages.addAll(scanSpec.mapperPackages);
+        }
+        for (String pkg : packages) {
+            changed |= enumeratePackageTypes(pkg);
+        }
+        return changed;
+    }
+
+    private boolean enumeratePackageTypes(String pkg) {
+        if (pkg == null || pkg.isBlank()) {
+            return false;
+        }
+        PackageElement packageElement = elements.getPackageElement(pkg);
+        if (packageElement == null) {
+            return false;
+        }
+        boolean changed = false;
+        for (Element enclosed : packageElement.getEnclosedElements()) {
+            if (enclosed.getKind().isClass() || enclosed.getKind().isInterface()) {
+                changed |= collectScanTypes(enclosed);
+            }
         }
         return changed;
     }
@@ -328,13 +357,24 @@ public class KoraProcessor extends AbstractProcessor {
                 messager.printMessage(Diagnostic.Kind.ERROR, "Failed to generate reflector: " + ex.getMessage(), spec.typeElement);
             }
         }
+        for (GeneratedSupportIndexStore.ReflectRegistration registration : generatedSupportIndexStore.reflectors()) {
+            TypeElement entityType = elements.getTypeElement(registration.entityTypeName());
+            if (entityType == null || !generatedReflectors.add(registration.entityTypeName())) {
+                continue;
+            }
+            try {
+                writeReflectorClassByName(entityType, registration.reflectorTypeName());
+            } catch (IOException ex) {
+                messager.printMessage(Diagnostic.Kind.ERROR, "Failed to regenerate reflector: " + ex.getMessage(), entityType);
+            }
+        }
     }
 
     private void generateMeta() {
         for (ScanSpec scanSpec : scanSpecs) {
             for (String entityTypeName : scanSpec.entityTypeNames) {
                 TypeElement entityType = elements.getTypeElement(entityTypeName);
-                if (entityType == null || !generatedMeta.add(entityTypeName)) {
+                if (entityType == null || !shouldCollectScannedType(entityType) || !generatedMeta.add(entityTypeName)) {
                     continue;
                 }
                 try {
@@ -342,6 +382,17 @@ public class KoraProcessor extends AbstractProcessor {
                 } catch (IOException ex) {
                     messager.printMessage(Diagnostic.Kind.ERROR, "Failed to generate meta class: " + ex.getMessage(), entityType);
                 }
+            }
+        }
+        for (GeneratedSupportIndexStore.TableRegistration registration : generatedSupportIndexStore.tables()) {
+            TypeElement entityType = elements.getTypeElement(registration.entityTypeName());
+            if (entityType == null || !shouldCollectScannedType(entityType) || !generatedMeta.add(registration.entityTypeName())) {
+                continue;
+            }
+            try {
+                writeMetaClass(entityType);
+            } catch (IOException ex) {
+                messager.printMessage(Diagnostic.Kind.ERROR, "Failed to regenerate meta class: " + ex.getMessage(), entityType);
             }
         }
     }
@@ -387,7 +438,7 @@ public class KoraProcessor extends AbstractProcessor {
         List<TypeElement> mapperTypes = new ArrayList<>();
         for (String mapperTypeName : scanSpec.mapperTypeNames) {
             TypeElement mapperType = elements.getTypeElement(mapperTypeName);
-            if (mapperType != null) {
+            if (mapperType != null && shouldCollectScannedType(mapperType)) {
                 mapperTypes.add(mapperType);
             }
         }
@@ -398,33 +449,44 @@ public class KoraProcessor extends AbstractProcessor {
         List<TypeElement> entityTypes = new ArrayList<>();
         for (String qualifiedName : scanSpec.entityTypeNames) {
             TypeElement typeElement = elements.getTypeElement(qualifiedName);
-            if (typeElement != null) {
+            if (typeElement != null && shouldCollectScannedType(typeElement)) {
                 entityTypes.add(typeElement);
             }
         }
         return entityTypes;
     }
 
-    private void collectScanTypes(Element element) {
-        if (element instanceof TypeElement typeElement) {
-            if (isGeneratedType(typeElement)) {
-                return;
+    private boolean collectScanTypes(Element element) {
+        if (!(element instanceof TypeElement typeElement) || !shouldCollectScannedType(typeElement)) {
+            return false;
+        }
+        boolean changed = false;
+        String qualifiedName = typeElement.getQualifiedName().toString();
+        for (ScanSpec scanSpec : scanSpecs) {
+            if (typeElement.getKind() == ElementKind.INTERFACE && matchesPackage(typeElement, scanSpec.mapperPackages)) {
+                changed |= scanSpec.mapperTypeNames.add(qualifiedName);
             }
-            String qualifiedName = typeElement.getQualifiedName().toString();
-            for (ScanSpec scanSpec : scanSpecs) {
-                if (typeElement.getKind() == ElementKind.INTERFACE && matchesPackage(typeElement, scanSpec.mapperPackages)) {
-                    scanSpec.mapperTypeNames.add(qualifiedName);
-                }
-                if (typeElement.getKind().isClass() && matchesPackage(typeElement, scanSpec.entityPackages)) {
-                    scanSpec.entityTypeNames.add(qualifiedName);
-                }
+            if (typeElement.getKind().isClass() && matchesPackage(typeElement, scanSpec.entityPackages)) {
+                changed |= scanSpec.entityTypeNames.add(qualifiedName);
             }
         }
-        for (Element enclosed : element.getEnclosedElements()) {
-            if (enclosed.getKind().isClass() || enclosed.getKind().isInterface()) {
-                collectScanTypes(enclosed);
-            }
-        }
+        return changed;
+    }
+
+    private boolean shouldCollectScannedType(TypeElement typeElement) {
+        return typeElement.getEnclosingElement().getKind() == ElementKind.PACKAGE
+                && !isGeneratedType(typeElement)
+                && !hasAnnotation(typeElement, "lombok.Generated");
+    }
+
+    private boolean shouldRetainPersistedEntityTypeName(String entityTypeName) {
+        TypeElement entityType = elements.getTypeElement(entityTypeName);
+        return entityType == null || shouldCollectScannedType(entityType);
+    }
+
+    private boolean shouldRetainPersistedMapperTypeName(String mapperTypeName) {
+        TypeElement mapperType = elements.getTypeElement(mapperTypeName);
+        return mapperType == null || shouldCollectScannedType(mapperType);
     }
 
     private boolean matchesPackage(TypeElement typeElement, List<String> packages) {
@@ -548,6 +610,10 @@ public class KoraProcessor extends AbstractProcessor {
         String packageName = generatedModelPackageName(entityType);
         String generatedSimpleName = tableSimpleName(entityType);
         String qualifiedName = packageName.isEmpty() ? generatedSimpleName : packageName + "." + generatedSimpleName;
+        if (generatedSourceTypeExists(qualifiedName)) {
+            generatedSupportIndexStore.upsertTable(entityType.getQualifiedName().toString(), qualifiedName);
+            return;
+        }
         writeSourceFile(qualifiedName, entityType, buildMetaSource(packageName, generatedSimpleName, entityType));
         generatedSupportIndexStore.upsertTable(entityType.getQualifiedName().toString(), qualifiedName);
     }
@@ -558,9 +624,17 @@ public class KoraProcessor extends AbstractProcessor {
         generatedSupportIndexStore.upsertReflector(entityType.getQualifiedName().toString(), qualifiedName);
     }
 
+    private void writeReflectorClassByName(TypeElement entityType, String qualifiedName) throws IOException {
+        writeClassFile(qualifiedName, entityType, reflectorClassGenerator.buildReflectorClass(qualifiedName, entityType));
+        generatedSupportIndexStore.upsertReflector(entityType.getQualifiedName().toString(), qualifiedName);
+    }
+
     private void writeSupportClass(ScanSpec scanSpec, List<TypeElement> entityTypes) throws IOException {
         String qualifiedName = supportClassName(scanSpec);
         if (!generatedSupports.add(qualifiedName)) {
+            return;
+        }
+        if (generatedSourceTypeExists(qualifiedName)) {
             return;
         }
         JavaFileObject fileObject = scanSpec.configType == null
@@ -592,6 +666,10 @@ public class KoraProcessor extends AbstractProcessor {
         try (Writer writer = fileObject.openWriter()) {
             writer.write(source);
         }
+    }
+
+    private boolean generatedSourceTypeExists(String qualifiedName) {
+        return elements.getTypeElement(qualifiedName) != null;
     }
 
     private void writeClassFile(String qualifiedName, Element originatingElement, byte[] bytecode) throws IOException {
@@ -712,21 +790,19 @@ public class KoraProcessor extends AbstractProcessor {
     private String buildSupportSource(ScanSpec scanSpec, List<TypeElement> entityTypes) {
         Map<String, String> reflectorRegistrations = new LinkedHashMap<>();
         for (ReflectSpec reflectSpec : reflectSpecs.values()) {
-            String entityTypeName = reflectSpec.typeElement().getQualifiedName().toString();
+            String entityTypeName = runtimeTypeName(reflectSpec.typeElement());
             reflectorRegistrations.putIfAbsent(
                     entityTypeName,
-                    "            com.nicleo.kora.core.runtime.GeneratedReflectors.register(%s.class, new %s%s());%n"
-                            .formatted(entityTypeName, reflectorTypeName(reflectSpec.typeElement(), reflectSpec.suffix()), "")
+                    buildReflectorRegistration(entityTypeName, reflectorTypeName(reflectSpec.typeElement(), reflectSpec.suffix()))
             );
         }
 
         Map<String, String> tableRegistrations = new LinkedHashMap<>();
         for (TypeElement entityType : entityTypes) {
-            String entityTypeName = entityType.getQualifiedName().toString();
+            String entityTypeName = runtimeTypeName(entityType);
             tableRegistrations.putIfAbsent(
                     entityTypeName,
-                    "            com.nicleo.kora.core.query.Tables.register(%s.class, %s);%n"
-                            .formatted(entityTypeName, tableConstantReference(entityType))
+                    buildTableRegistration(entityTypeName, generatedModelPackageName(entityType) + "." + tableSimpleName(entityType))
             );
         }
 
@@ -754,6 +830,32 @@ public class KoraProcessor extends AbstractProcessor {
                 %s%s            installed = true;
                         }
                     }
+
+                    @SuppressWarnings({"rawtypes", "unchecked"})
+                    private static void registerReflector(String entityTypeName, String reflectorTypeName) {
+                        try {
+                            Class<?> entityType = Class.forName(entityTypeName);
+                            Class<?> reflectorType = Class.forName(reflectorTypeName);
+                            Object reflector = reflectorType.getDeclaredConstructor().newInstance();
+                            com.nicleo.kora.core.runtime.GeneratedReflectors.register((Class) entityType,
+                                    (com.nicleo.kora.core.runtime.GeneratedReflector) reflector);
+                        } catch (ReflectiveOperationException ex) {
+                            throw new IllegalStateException("Failed to register generated reflector: " + reflectorTypeName, ex);
+                        }
+                    }
+
+                    @SuppressWarnings({"rawtypes", "unchecked"})
+                    private static void registerTable(String entityTypeName, String tableTypeName) {
+                        try {
+                            Class<?> entityType = Class.forName(entityTypeName);
+                            Class<?> tableType = Class.forName(tableTypeName);
+                            Object table = tableType.getField("TABLE").get(null);
+                            com.nicleo.kora.core.query.Tables.register((Class) entityType,
+                                    (com.nicleo.kora.core.query.EntityTable) table);
+                        } catch (ReflectiveOperationException ex) {
+                            throw new IllegalStateException("Failed to register generated table: " + tableTypeName, ex);
+                        }
+                    }
                 }
                 """.formatted(packageBlock, simpleName, simpleName, simpleName, registrations, tableRegistrationBlock);
     }
@@ -762,27 +864,37 @@ public class KoraProcessor extends AbstractProcessor {
                                                     Map<String, String> tableRegistrations) {
         try {
             for (GeneratedSupportIndexStore.ReflectRegistration registration : generatedSupportIndexStore.reflectors()) {
-                if (elements.getTypeElement(registration.entityTypeName()) == null) {
+                TypeElement entityType = elements.getTypeElement(registration.entityTypeName());
+                if (entityType == null) {
                     continue;
                 }
                 reflectorRegistrations.putIfAbsent(
-                        registration.entityTypeName(),
-                        "            com.nicleo.kora.core.runtime.GeneratedReflectors.register(%s.class, new %s());%n"
-                                .formatted(registration.entityTypeName(), registration.reflectorTypeName())
+                        runtimeTypeName(entityType),
+                        buildReflectorRegistration(runtimeTypeName(entityType), registration.reflectorTypeName())
                 );
             }
             for (GeneratedSupportIndexStore.TableRegistration registration : generatedSupportIndexStore.tables()) {
-                if (elements.getTypeElement(registration.entityTypeName()) == null) {
+                TypeElement entityType = elements.getTypeElement(registration.entityTypeName());
+                if (entityType == null || !shouldCollectScannedType(entityType)) {
                     continue;
                 }
                 tableRegistrations.putIfAbsent(
-                        registration.entityTypeName(),
-                        "            com.nicleo.kora.core.query.Tables.register(%s.class, %s.TABLE);%n"
-                                .formatted(registration.entityTypeName(), registration.tableTypeName())
+                        runtimeTypeName(entityType),
+                        buildTableRegistration(runtimeTypeName(entityType), registration.tableTypeName())
                 );
             }
         } catch (Exception ignored) {
         }
+    }
+
+    private String buildReflectorRegistration(String entityTypeName, String reflectorTypeName) {
+        return "            registerReflector(\"%s\", \"%s\");%n"
+                .formatted(escapeJava(entityTypeName), escapeJava(reflectorTypeName));
+    }
+
+    private String buildTableRegistration(String entityTypeName, String tableTypeName) {
+        return "            registerTable(\"%s\", \"%s\");%n"
+                .formatted(escapeJava(entityTypeName), escapeJava(tableTypeName));
     }
 
     private boolean isListReturn(TypeMirror returnType) {
@@ -1593,6 +1705,10 @@ public class KoraProcessor extends AbstractProcessor {
         return packageElement.isUnnamed() ? "" : packageElement.getQualifiedName().toString();
     }
 
+    private String runtimeTypeName(TypeElement typeElement) {
+        return elements.getBinaryName(typeElement).toString();
+    }
+
     private String generatedModelPackageName(TypeElement typeElement) {
         return GENERATED_PACKAGE_PREFIX + "." + packageHashSegment(packageNameOf(typeElement));
     }
@@ -1702,11 +1818,22 @@ public class KoraProcessor extends AbstractProcessor {
         persistedScanSpecsLoaded = true;
         for (ScanSpecIndexStore.ScanConfigMetadata metadata : scanSpecIndexStore.read()) {
             TypeElement configType = elements.getTypeElement(metadata.configQualifiedName());
-            if (configType == null) {
-                scanSpecIndexDirty = true;
-                continue;
+            ScanSpec scanSpec = new ScanSpec(configType, metadata.configQualifiedName(), mapperXmlRoots, metadata.entityPackages(), metadata.mapperPackages());
+            for (String entityTypeName : metadata.entityTypeNames()) {
+                if (shouldRetainPersistedEntityTypeName(entityTypeName)) {
+                    scanSpec.entityTypeNames.add(entityTypeName);
+                } else {
+                    scanSpecIndexDirty = true;
+                }
             }
-            upsertScanSpec(new ScanSpec(configType, metadata.configQualifiedName(), mapperXmlRoots, metadata.entityPackages(), metadata.mapperPackages()));
+            for (String mapperTypeName : metadata.mapperTypeNames()) {
+                if (shouldRetainPersistedMapperTypeName(mapperTypeName)) {
+                    scanSpec.mapperTypeNames.add(mapperTypeName);
+                } else {
+                    scanSpecIndexDirty = true;
+                }
+            }
+            upsertScanSpec(scanSpec);
         }
     }
 
@@ -1715,7 +1842,13 @@ public class KoraProcessor extends AbstractProcessor {
             return;
         }
         persistedSupportIndexLoaded = true;
-        generatedSupportIndexStore.load((entityTypeName, generatedTypeName) -> elements.getTypeElement(entityTypeName) != null);
+        generatedSupportIndexStore.load((entityTypeName, generatedTypeName) -> {
+            if (!generatedTypeName.endsWith("Table")) {
+                return true;
+            }
+            TypeElement entityType = elements.getTypeElement(entityTypeName);
+            return entityType == null || shouldCollectScannedType(entityType);
+        });
     }
 
     private void persistScanSpecsIfNeeded() {
@@ -1874,7 +2007,13 @@ public class KoraProcessor extends AbstractProcessor {
         }
 
         ScanSpecIndexStore.ScanConfigMetadata metadata() {
-            return new ScanSpecIndexStore.ScanConfigMetadata(configQualifiedName, entityPackages, mapperPackages);
+            return new ScanSpecIndexStore.ScanConfigMetadata(
+                    configQualifiedName,
+                    entityPackages,
+                    mapperPackages,
+                    new ArrayList<>(entityTypeNames),
+                    new ArrayList<>(mapperTypeNames)
+            );
         }
 
         private static String simpleNameOf(TypeElement configType, String configQualifiedName) {
