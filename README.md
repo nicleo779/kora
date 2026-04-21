@@ -9,7 +9,7 @@
 
 组合到一起。
 
-当前仓库包含核心运行时、注解处理器、Spring Boot 自动配置，以及一个可直接运行的 `simple` 示例模块。
+当前仓库包含核心运行时、注解处理器、Spring Boot / Quarkus 集成，以及一个可直接运行的 `simple` 示例模块。
 
 ## 模块
 
@@ -17,6 +17,8 @@
   注解、运行时接口、JDBC 执行、Wrapper DSL、分页、Reflector、Dialect SPI。
 - `kora-processor`
   编译期扫描、Mapper 实现生成、实体表元数据生成、Reflector 生成。
+- `kora-quarkus`
+  Quarkus 扩展运行时、`SqlExecutor` 默认生产者、Mapper Bean 自动注册、静态 `Sql` 入口绑定。
 - `kora-spring-boot`
   Spring Boot 自动配置、事务感知 `SqlSession`、Mapper Bean 自动注册、静态 `Sql` 入口。
 - `simple`
@@ -36,6 +38,7 @@
 - `Page<T>` 分页
 - `Map<String, Object>`、基础类型、实体映射
 - Spring Boot 自动注册 `SqlSessionFactory`、`SqlSession`、Mapper Bean
+- Quarkus 自动注册 `SqlExecutor`、Mapper Bean
 - 静态 `Sql.query()` / `Sql.from(...)` / `Sql.select(...)` 查询入口
 - SQL Dialect SPI
 
@@ -429,6 +432,56 @@ Sql.updateById(user);
 Sql.deleteById(User.class, 1L);
 ```
 
+## Quarkus 集成
+
+### 依赖
+
+```kotlin
+dependencies {
+    implementation("com.nicleo:kora-quarkus:1.0.0")
+    annotationProcessor("com.nicleo:kora-processor:1.0.0")
+}
+```
+
+### 自动配置提供
+
+存在 `DataSource` 时，`kora-quarkus` 会自动提供：
+
+- `SqlExecutor`
+- `SqlPagingSupport`
+- `SqlGenerator`
+- Mapper Bean 自动注册
+- 静态 `Sql` 入口绑定
+- `@KoraScan` 生成表/Reflector 的启动期安装
+
+### 用法
+
+和 Spring Boot 一样，Quarkus 下仍然通过 `@KoraScan` 描述实体与 Mapper 包：
+
+```java
+@KoraScan(
+        entity = {"com.example.quarkus.entity"},
+        mapper = {"com.example.quarkus.mapper"}
+)
+public class KoraQuarkusConfig {
+}
+```
+
+生成的 Mapper 可以直接通过 CDI 注入：
+
+```java
+@Inject
+UserMapper userMapper;
+```
+
+静态 DSL 入口同样可用：
+
+```java
+User user = Sql.from(Tables.get(User.class))
+        .limit(1)
+        .one(User.class);
+```
+
 ## 构建与测试
 
 运行全部测试：
@@ -569,6 +622,8 @@ xychart-beta
 .
 |-- kora-core
 |-- kora-processor
+|-- kora-quarkus
+|-- kora-quarkus-deployment
 |-- kora-spring-boot
 `-- simple
 ```
@@ -580,4 +635,5 @@ xychart-beta
 - `simple/src/main/resources/mapper/UserMapper.xml`
 - `simple/src/test/java/com/example/simple/SimpleIntegrationTest.java`
 - `simple/src/test/java/com/example/simple/benchmark/SimpleMapperPerformanceBenchmark.java`
+- `kora-quarkus-deployment/src/test/java/com/nicleo/kora/quarkus/deployment/test/KoraQuarkusProcessorTest.java`
 - `kora-spring-boot/src/test/java/com/nicleo/kora/spring/boot/autoconfigure/KoraAutoConfigurationTest.java`

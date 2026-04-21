@@ -1,0 +1,7 @@
+<mapper namespace="com.nicleo.kora.quarkus.deployment.test.TestUserMapper">
+    <select id="selectById">
+        select id, name
+        from test_user
+        where id = #{id}
+    </select>
+</mapper>

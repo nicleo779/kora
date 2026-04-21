@@ -1,5 +1,5 @@
 group = "com.nicleo"
-version = "1.0.2"
+version = "1.0.1"
 
 subprojects {
     group = rootProject.group
@@ -14,6 +14,8 @@ allprojects {
     description = when (name) {
         "kora-core" -> "Kora lightweight SQL framework core runtime"
         "kora-processor" -> "Kora annotation processor for mapper, reflector, and meta generation"
+        "kora-quarkus" -> "Kora Quarkus extension runtime support"
+        "kora-quarkus-deployment" -> "Kora Quarkus extension deployment support"
         "kora-spring-boot" -> "Kora Spring Boot auto-configuration support"
         else -> "Kora project"
     }
