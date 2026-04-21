@@ -1,12 +1,6 @@
 package com.nicleo.kora.spring.boot.autoconfigure;
 
-import com.nicleo.kora.core.runtime.DefaultSqlGenerator;
-import com.nicleo.kora.core.runtime.DefaultSqlPagingSupport;
-import com.nicleo.kora.core.runtime.SqlExecutor;
-import com.nicleo.kora.core.runtime.SqlGenerator;
-import com.nicleo.kora.core.runtime.SqlInterceptor;
-import com.nicleo.kora.core.runtime.SqlPagingSupport;
-import com.nicleo.kora.core.runtime.TypeConverter;
+import com.nicleo.kora.core.runtime.*;
 import com.nicleo.kora.spring.boot.SpringTransactionSqlExecutor;
 import com.nicleo.kora.spring.boot.Sql;
 import org.springframework.beans.factory.ObjectProvider;
@@ -46,12 +40,14 @@ public class KoraAutoConfiguration {
                                    ObjectProvider<TypeConverter> typeConverter,
                                    ObjectProvider<SqlPagingSupport> sqlPagingSupport,
                                    ObjectProvider<SqlGenerator> sqlGenerator,
-                                   ObjectProvider<List<SqlInterceptor>> interceptors) {
+                                   ObjectProvider<List<SqlInterceptor>> interceptors,
+                                   ObjectProvider<IdGenerator> idGenerators) {
         SpringTransactionSqlExecutor sqlExecutor = new SpringTransactionSqlExecutor(dataSource);
         sqlPagingSupport.ifAvailable(sqlExecutor::setSqlPagingSupport);
         sqlGenerator.ifAvailable(sqlExecutor::setSqlGenerator);
         typeConverter.ifAvailable(sqlExecutor::setTypeConverter);
         interceptors.ifAvailable(sqlExecutor::addInterceptor);
+        idGenerators.ifAvailable(sqlExecutor::setIdGenerator);
         return sqlExecutor;
     }
 
