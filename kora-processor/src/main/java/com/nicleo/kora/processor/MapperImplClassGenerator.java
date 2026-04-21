@@ -193,8 +193,13 @@ final class MapperImplClassGenerator {
                 AsmUtils.pushClassLiteral(mv, method.getReturnType(), context.types());
                 mv.visitMethodInsn(Opcodes.INVOKESTATIC, GENERATED_MAPPER_SUPPORT, "selectOne",
                         "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;[" + ANNOTATION_META_DESC + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;Ljava/lang/Class;)Ljava/lang/Object;", false);
-                if (context.types().erasure(method.getReturnType()).getKind() != TypeKind.VOID) {
+                TypeKind returnKind = context.types().erasure(method.getReturnType()).getKind();
+                if (returnKind != TypeKind.VOID) {
+                    if (returnKind.isPrimitive()) {
+                        AsmUtils.castFromObject(mv, method.getReturnType(), context.types());
+                    } else {
                     mv.visitTypeInsn(Opcodes.CHECKCAST, org.objectweb.asm.Type.getType(AsmUtils.descriptor(method.getReturnType(), context.types())).getInternalName());
+                    }
                 }
                 mv.visitInsn(AsmUtils.returnOpcode(method.getReturnType()));
             }

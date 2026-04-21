@@ -1,12 +1,12 @@
-package com.nicleo.kora.core.annotation;
+package com.example.simple;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-@Target(ElementType.TYPE)
-@Retention(RetentionPolicy.CLASS)
-public @interface MapperCapability {
-    Class<?> value();
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
+public @interface TestMapperTag {
+    String value();
 }

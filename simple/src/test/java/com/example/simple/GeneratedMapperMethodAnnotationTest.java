@@ -1,0 +1,133 @@
+package com.example.simple;
+
+import com.example.simple.entity.User;
+import com.example.simple.mapper.UserMapper;
+import com.nicleo.kora.core.runtime.AnnotationMeta;
+import com.nicleo.kora.core.runtime.DbType;
+import com.nicleo.kora.core.runtime.IdGenerator;
+import com.nicleo.kora.core.runtime.RowMapper;
+import com.nicleo.kora.core.runtime.SqlExecutionContext;
+import com.nicleo.kora.core.runtime.SqlExecutor;
+import com.nicleo.kora.core.runtime.SqlGenerator;
+import com.nicleo.kora.core.runtime.SqlPagingSupport;
+import com.nicleo.kora.core.runtime.TypeConverter;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+
+class GeneratedMapperMethodAnnotationTest {
+    @Test
+    void generatedMapperShouldPassCompiledMethodAnnotationsToSqlInterceptorContext() throws Exception {
+        CapturingSqlExecutor sqlExecutor = new CapturingSqlExecutor();
+        Class<?> supportClass = Class.forName("gen.KoraSimpleConfigGenerated");
+        java.lang.reflect.Field installedField = supportClass.getDeclaredField("installed");
+        installedField.setAccessible(true);
+        installedField.setBoolean(null, false);
+        UserMapper mapper = (UserMapper) Class.forName("com.example.simple.mapper.UserMapperImpl")
+                .getConstructor(SqlExecutor.class)
+                .newInstance(sqlExecutor);
+
+        mapper.selectById(1L);
+
+        AnnotationMeta annotation = (AnnotationMeta) SqlExecutionContext.class
+                .getMethod("getMapperMethodAnnotation", String.class)
+                .invoke(sqlExecutor.capturedContext, TestMapperTag.class.getName());
+        assertNotNull(annotation);
+        assertEquals(TestMapperTag.class.getName(), annotation.type());
+        assertEquals("selectById", annotation.value("value"));
+    }
+
+    static final class CapturingSqlExecutor implements SqlExecutor {
+        private TypeConverter typeConverter = new TypeConverter();
+        private SqlExecutionContext capturedContext;
+
+        @Override
+        public <T> T selectOne(String sql, Object[] args, Class<T> resultType) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <T> List<T> selectList(String sql, Object[] args, Class<T> resultType) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int update(String sql, Object[] args) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <T> T updateAndReturnGeneratedKey(String sql, Object[] args, Class<T> resultType) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int[] executeBatch(String sql, List<Object[]> batchArgs) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public TypeConverter getTypeConverter() {
+            return typeConverter;
+        }
+
+        @Override
+        public void setTypeConverter(TypeConverter typeConverter) {
+            this.typeConverter = typeConverter;
+        }
+
+        @Override
+        public IdGenerator getIdGenerator() {
+            return null;
+        }
+
+        @Override
+        public void setIdGenerator(IdGenerator idGenerator) {
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> T selectOne(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
+            this.capturedContext = context;
+            return resultType == User.class ? (T) new User() : null;
+        }
+
+        @Override
+        public <T> List<T> selectList(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int update(String sql, Object[] args, SqlExecutionContext context) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int[] executeBatch(String sql, List<Object[]> batchArgs, SqlExecutionContext context) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SqlPagingSupport getSqlPagingSupport() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public DbType getDbType() {
+            return DbType.H2;
+        }
+
+        @Override
+        public SqlGenerator getSqlGenerator() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <T> List<T> executeQuery(String sql, Object[] args, RowMapper<T> rowMapper) {
+            throw new UnsupportedOperationException();
+        }
+    }
+}

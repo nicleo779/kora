@@ -47,7 +47,6 @@ import javax.tools.JavaFileObject;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.Writer;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -88,10 +87,13 @@ public class KoraProcessor extends AbstractProcessor {
     private long mapperElapsedNanos;
     private boolean mapperOptionWarningPrinted;
     private MapperXmlLoader xmlLoader;
-    private GeneratedReflectorMetadataWriter reflectorMetadataWriter;
-    private GeneratedSupportScanner generatedSupportScanner;
+    private GeneratedSupportIndexStore generatedSupportIndexStore;
+    private ScanSpecIndexStore scanSpecIndexStore;
     private ReflectorClassGenerator reflectorClassGenerator;
     private MapperImplClassGenerator mapperImplClassGenerator;
+    private boolean persistedScanSpecsLoaded;
+    private boolean persistedSupportIndexLoaded;
+    private boolean scanSpecIndexDirty;
 
     private final Map<String, ReflectSpec> reflectSpecs = new LinkedHashMap<>();
     private final Map<String, MapperCapabilitySpec> mapperCapabilitySpecs = new LinkedHashMap<>();
@@ -116,8 +118,8 @@ public class KoraProcessor extends AbstractProcessor {
         this.mapperXmlRoots = parseMapperXmlRoots(processingEnv.getOptions().get("kora.mapper"));
         this.debugEnabled = isDebugEnabled(processingEnv.getOptions().get("kora.debug"));
         this.xmlLoader = new MapperXmlLoader();
-        this.reflectorMetadataWriter = new GeneratedReflectorMetadataWriter(filer);
-        this.generatedSupportScanner = new GeneratedSupportScanner();
+        this.generatedSupportIndexStore = new GeneratedSupportIndexStore(filer);
+        this.scanSpecIndexStore = new ScanSpecIndexStore(filer);
         this.reflectorClassGenerator = new ReflectorClassGenerator(new ReflectorClassGenerator.Context() {
             @Override
             public Types types() {
@@ -223,12 +225,16 @@ public class KoraProcessor extends AbstractProcessor {
             debugStartNanos = System.nanoTime();
             debugStartMillis = System.currentTimeMillis();
         }
+        loadPersistedScanSpecsIfNeeded();
+        loadPersistedSupportIndexIfNeeded();
         mapperCapabilityPresenceCache.clear();
         mapperCapabilityEntityTypesCache.clear();
         collectReflectSpecs(roundEnv);
         long mapperStart = System.nanoTime();
         collectMapperCapabilitySpecs(roundEnv);
-        collectScanSpecs(roundEnv);
+        if (collectScanSpecs(roundEnv)) {
+            scanSpecIndexDirty = true;
+        }
         collectMapperReflectSpecs(roundEnv);
         generateReflectors();
         mapperElapsedNanos += System.nanoTime() - mapperStart;
@@ -237,10 +243,14 @@ public class KoraProcessor extends AbstractProcessor {
         generateMeta();
         entityElapsedNanos += System.nanoTime() - entityStart;
 
-        if (!roundEnv.processingOver() && annotations.isEmpty()) {
+        if (!roundEnv.processingOver() && !scanSpecs.isEmpty()) {
             mapperStart = System.nanoTime();
             generateSupportsAndMappers();
             mapperElapsedNanos += System.nanoTime() - mapperStart;
+        }
+        if (roundEnv.processingOver()) {
+            persistScanSpecsIfNeeded();
+            persistGeneratedSupportIndexIfNeeded();
         }
         if (debugEnabled && roundEnv.processingOver() && debugStartNanos != 0L) {
             printDebugSummary();
@@ -289,7 +299,8 @@ public class KoraProcessor extends AbstractProcessor {
         mapperCapabilitySpecs.put(contractTypeName, new MapperCapabilitySpec(contractType, implType));
     }
 
-    private void collectScanSpecs(RoundEnvironment roundEnv) {
+    private boolean collectScanSpecs(RoundEnvironment roundEnv) {
+        boolean changed = false;
         for (Element element : roundEnv.getElementsAnnotatedWith(KoraScan.class)) {
             if (element.getKind() != ElementKind.CLASS) {
                 messager.printMessage(Diagnostic.Kind.ERROR, "@KoraScan can only be used on classes", element);
@@ -297,17 +308,13 @@ public class KoraProcessor extends AbstractProcessor {
             }
             TypeElement configType = (TypeElement) element;
             warnIfMapperOptionMissing(configType);
-            String configQualifiedName = configType.getQualifiedName().toString();
-            boolean exists = scanSpecs.stream().anyMatch(spec -> spec.configQualifiedName.equals(configQualifiedName));
-            if (exists) {
-                continue;
-            }
             KoraScan scan = configType.getAnnotation(KoraScan.class);
-            scanSpecs.add(new ScanSpec(configType, mapperXmlRoots, List.of(scan.entity()), List.of(scan.mapper())));
+            changed |= upsertScanSpec(new ScanSpec(configType, mapperXmlRoots, List.of(scan.entity()), List.of(scan.mapper())));
         }
         for (Element rootElement : roundEnv.getRootElements()) {
             collectScanTypes(rootElement);
         }
+        return changed;
     }
 
     private void generateReflectors() {
@@ -354,9 +361,9 @@ public class KoraProcessor extends AbstractProcessor {
                     registerMapperCapabilityReflectSpecs(mapperType);
                 }
             } catch (IOException ex) {
-                messager.printMessage(Diagnostic.Kind.ERROR, "Failed to collect mapper reflect specs: " + ex.getMessage(), scanSpec.configType);
+                printScanSpecMessage(Diagnostic.Kind.ERROR, "Failed to collect mapper reflect specs: " + ex.getMessage(), scanSpec);
             } catch (ProcessorException ex) {
-                messager.printMessage(Diagnostic.Kind.ERROR, ex.getMessage(), scanSpec.configType);
+                printScanSpecMessage(Diagnostic.Kind.ERROR, ex.getMessage(), scanSpec);
             }
         }
     }
@@ -463,9 +470,9 @@ public class KoraProcessor extends AbstractProcessor {
                     writeMapperImpl(mapperType, new MapperXmlDefinition(mapperQualifiedName, Map.of()), supportClassName(scanSpec));
                 }
             } catch (IOException ex) {
-                messager.printMessage(Diagnostic.Kind.ERROR, "Failed to process scan config: " + ex.getMessage(), scanSpec.configType);
+                printScanSpecMessage(Diagnostic.Kind.ERROR, "Failed to process scan config: " + ex.getMessage(), scanSpec);
             } catch (ProcessorException ex) {
-                messager.printMessage(Diagnostic.Kind.ERROR, ex.getMessage(), scanSpec.configType);
+                printScanSpecMessage(Diagnostic.Kind.ERROR, ex.getMessage(), scanSpec);
             }
         }
     }
@@ -542,12 +549,13 @@ public class KoraProcessor extends AbstractProcessor {
         String generatedSimpleName = tableSimpleName(entityType);
         String qualifiedName = packageName.isEmpty() ? generatedSimpleName : packageName + "." + generatedSimpleName;
         writeSourceFile(qualifiedName, entityType, buildMetaSource(packageName, generatedSimpleName, entityType));
+        generatedSupportIndexStore.upsertTable(entityType.getQualifiedName().toString(), qualifiedName);
     }
 
     private void writeReflectorClass(TypeElement entityType, String suffix) throws IOException {
         String qualifiedName = reflectorTypeName(entityType, suffix);
         writeClassFile(qualifiedName, entityType, reflectorClassGenerator.buildReflectorClass(qualifiedName, entityType));
-        reflectorMetadataWriter.write(entityType.getQualifiedName().toString(), qualifiedName, entityType);
+        generatedSupportIndexStore.upsertReflector(entityType.getQualifiedName().toString(), qualifiedName);
     }
 
     private void writeSupportClass(ScanSpec scanSpec, List<TypeElement> entityTypes) throws IOException {
@@ -555,9 +563,11 @@ public class KoraProcessor extends AbstractProcessor {
         if (!generatedSupports.add(qualifiedName)) {
             return;
         }
-        JavaFileObject fileObject = filer.createSourceFile(qualifiedName, scanSpec.configType);
+        JavaFileObject fileObject = scanSpec.configType == null
+                ? filer.createSourceFile(qualifiedName)
+                : filer.createSourceFile(qualifiedName, scanSpec.configType);
         try (Writer writer = fileObject.openWriter()) {
-            writer.write(buildSupportSource(scanSpec, entityTypes, fileObject));
+            writer.write(buildSupportSource(scanSpec, entityTypes));
         }
     }
 
@@ -699,7 +709,7 @@ public class KoraProcessor extends AbstractProcessor {
         return defaultValue;
     }
 
-    private String buildSupportSource(ScanSpec scanSpec, List<TypeElement> entityTypes, JavaFileObject supportFileObject) {
+    private String buildSupportSource(ScanSpec scanSpec, List<TypeElement> entityTypes) {
         Map<String, String> reflectorRegistrations = new LinkedHashMap<>();
         for (ReflectSpec reflectSpec : reflectSpecs.values()) {
             String entityTypeName = reflectSpec.typeElement().getQualifiedName().toString();
@@ -720,7 +730,7 @@ public class KoraProcessor extends AbstractProcessor {
             );
         }
 
-        mergeGeneratedSupportRegistrations(scanSpec, supportFileObject, reflectorRegistrations, tableRegistrations);
+        mergeGeneratedSupportRegistrations(reflectorRegistrations, tableRegistrations);
         String packageName = GENERATED_PACKAGE_PREFIX;
         String simpleName = supportSimpleName(scanSpec);
         String packageBlock = packageName.isEmpty() ? "" : "package %s;%n%n".formatted(packageName);
@@ -748,17 +758,10 @@ public class KoraProcessor extends AbstractProcessor {
                 """.formatted(packageBlock, simpleName, simpleName, simpleName, registrations, tableRegistrationBlock);
     }
 
-    private void mergeGeneratedSupportRegistrations(ScanSpec scanSpec,
-                                                    JavaFileObject supportFileObject,
-                                                    Map<String, String> reflectorRegistrations,
+    private void mergeGeneratedSupportRegistrations(Map<String, String> reflectorRegistrations,
                                                     Map<String, String> tableRegistrations) {
         try {
-            if (!"file".equalsIgnoreCase(supportFileObject.toUri().getScheme())) {
-                return;
-            }
-            Path supportSourcePath = Path.of(supportFileObject.toUri());
-            GeneratedSupportScanner.SupportRegistrations registrations = generatedSupportScanner.scan(supportSourcePath);
-            for (GeneratedSupportScanner.ReflectRegistration registration : registrations.reflectors()) {
+            for (GeneratedSupportIndexStore.ReflectRegistration registration : generatedSupportIndexStore.reflectors()) {
                 if (elements.getTypeElement(registration.entityTypeName()) == null) {
                     continue;
                 }
@@ -768,7 +771,7 @@ public class KoraProcessor extends AbstractProcessor {
                                 .formatted(registration.entityTypeName(), registration.reflectorTypeName())
                 );
             }
-            for (GeneratedSupportScanner.TableRegistration registration : registrations.tables()) {
+            for (GeneratedSupportIndexStore.TableRegistration registration : generatedSupportIndexStore.tables()) {
                 if (elements.getTypeElement(registration.entityTypeName()) == null) {
                     continue;
                 }
@@ -1676,7 +1679,7 @@ public class KoraProcessor extends AbstractProcessor {
     }
 
     private String supportSimpleName(ScanSpec scanSpec) {
-        return scanSpec.configType.getSimpleName() + "Generated";
+        return scanSpec.configSimpleName + "Generated";
     }
 
     private String supportClassName(ScanSpec scanSpec) {
@@ -1690,6 +1693,76 @@ public class KoraProcessor extends AbstractProcessor {
                 .replace("\"", "\\\"")
                 .replace("\r", "\\r")
                 .replace("\n", "\\n");
+    }
+
+    private void loadPersistedScanSpecsIfNeeded() {
+        if (persistedScanSpecsLoaded) {
+            return;
+        }
+        persistedScanSpecsLoaded = true;
+        for (ScanSpecIndexStore.ScanConfigMetadata metadata : scanSpecIndexStore.read()) {
+            TypeElement configType = elements.getTypeElement(metadata.configQualifiedName());
+            if (configType == null) {
+                scanSpecIndexDirty = true;
+                continue;
+            }
+            upsertScanSpec(new ScanSpec(configType, metadata.configQualifiedName(), mapperXmlRoots, metadata.entityPackages(), metadata.mapperPackages()));
+        }
+    }
+
+    private void loadPersistedSupportIndexIfNeeded() {
+        if (persistedSupportIndexLoaded) {
+            return;
+        }
+        persistedSupportIndexLoaded = true;
+        generatedSupportIndexStore.load((entityTypeName, generatedTypeName) -> elements.getTypeElement(entityTypeName) != null);
+    }
+
+    private void persistScanSpecsIfNeeded() {
+        if (!scanSpecIndexDirty) {
+            return;
+        }
+        try {
+            scanSpecIndexStore.write(
+                    scanSpecs.stream().map(ScanSpec::metadata).toList(),
+                    scanSpecs.stream().map(ScanSpec::configType).filter(element -> element != null).toList()
+            );
+            scanSpecIndexDirty = false;
+        } catch (IOException ex) {
+            messager.printMessage(Diagnostic.Kind.WARNING, "Failed to persist kora scan metadata: " + ex.getMessage());
+        }
+    }
+
+    private void persistGeneratedSupportIndexIfNeeded() {
+        try {
+            generatedSupportIndexStore.write();
+        } catch (IOException ex) {
+            messager.printMessage(Diagnostic.Kind.WARNING, "Failed to persist generated support metadata: " + ex.getMessage());
+        }
+    }
+
+    private boolean upsertScanSpec(ScanSpec candidate) {
+        for (int i = 0; i < scanSpecs.size(); i++) {
+            ScanSpec existing = scanSpecs.get(i);
+            if (!existing.configQualifiedName.equals(candidate.configQualifiedName)) {
+                continue;
+            }
+            if (existing.sameConfiguration(candidate)) {
+                return false;
+            }
+            scanSpecs.set(i, candidate);
+            return true;
+        }
+        scanSpecs.add(candidate);
+        return true;
+    }
+
+    private void printScanSpecMessage(Diagnostic.Kind kind, String message, ScanSpec scanSpec) {
+        if (scanSpec.configType != null) {
+            messager.printMessage(kind, message, scanSpec.configType);
+            return;
+        }
+        messager.printMessage(kind, message + " [" + scanSpec.configQualifiedName + "]");
     }
 
     static final class ReflectSpec {
@@ -1768,6 +1841,7 @@ public class KoraProcessor extends AbstractProcessor {
     static final class ScanSpec {
         private final TypeElement configType;
         private final String configQualifiedName;
+        private final String configSimpleName;
         private final List<String> xmlRoots;
         private final List<String> entityPackages;
         private final List<String> mapperPackages;
@@ -1776,8 +1850,13 @@ public class KoraProcessor extends AbstractProcessor {
         private Map<String, MapperXmlDefinition> xmlDefinitions;
 
         private ScanSpec(TypeElement configType, List<String> xmlRoots, List<String> entityPackages, List<String> mapperPackages) {
+            this(configType, configType.getQualifiedName().toString(), xmlRoots, entityPackages, mapperPackages);
+        }
+
+        private ScanSpec(TypeElement configType, String configQualifiedName, List<String> xmlRoots, List<String> entityPackages, List<String> mapperPackages) {
             this.configType = configType;
-            this.configQualifiedName = configType.getQualifiedName().toString();
+            this.configQualifiedName = configQualifiedName;
+            this.configSimpleName = simpleNameOf(configType, configQualifiedName);
             this.xmlRoots = xmlRoots.stream().filter(value -> !value.isBlank()).map(String::trim).toList();
             this.entityPackages = entityPackages.stream().filter(value -> !value.isBlank()).map(String::trim).toList();
             this.mapperPackages = mapperPackages.stream().filter(value -> !value.isBlank()).map(String::trim).toList();
@@ -1785,6 +1864,25 @@ public class KoraProcessor extends AbstractProcessor {
 
         TypeElement configType() {
             return configType;
+        }
+
+        boolean sameConfiguration(ScanSpec other) {
+            return configQualifiedName.equals(other.configQualifiedName)
+                    && entityPackages.equals(other.entityPackages)
+                    && mapperPackages.equals(other.mapperPackages)
+                    && xmlRoots.equals(other.xmlRoots);
+        }
+
+        ScanSpecIndexStore.ScanConfigMetadata metadata() {
+            return new ScanSpecIndexStore.ScanConfigMetadata(configQualifiedName, entityPackages, mapperPackages);
+        }
+
+        private static String simpleNameOf(TypeElement configType, String configQualifiedName) {
+            if (configType != null) {
+                return configType.getSimpleName().toString();
+            }
+            int separator = configQualifiedName.lastIndexOf('.');
+            return separator >= 0 ? configQualifiedName.substring(separator + 1) : configQualifiedName;
         }
     }
 
