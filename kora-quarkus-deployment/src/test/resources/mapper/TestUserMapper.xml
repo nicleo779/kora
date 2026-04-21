@@ -1,4 +1,4 @@
-<mapper namespace="com.nicleo.kora.quarkus.deployment.test.TestUserMapper">
+<mapper namespace="com.nicleo.kora.quarkus.deployment.test.mapper.TestUserMapper">
     <select id="selectById">
         select id, name
         from test_user

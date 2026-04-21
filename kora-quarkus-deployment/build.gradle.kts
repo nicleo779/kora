@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.compile.JavaCompile
+
 plugins {
     id("java-library")
     id("maven-publish")
@@ -14,11 +16,11 @@ java {
 
 dependencies {
     implementation(project(":kora-quarkus"))
-    implementation(enforcedPlatform("io.quarkus:quarkus-bom:$quarkusVersion"))
     implementation("io.quarkus:quarkus-core-deployment:$quarkusVersion")
     implementation("io.quarkus:quarkus-arc-deployment:$quarkusVersion")
 
     testImplementation(platform("org.junit:junit-bom:5.10.0"))
+    testImplementation(platform("io.quarkus:quarkus-bom:$quarkusVersion"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testImplementation("io.quarkus:quarkus-junit5:$quarkusVersion")
     testImplementation("io.quarkus:quarkus-junit5-internal:$quarkusVersion")
@@ -32,6 +34,12 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    if (name == "compileTestJava") {
+        options.compilerArgs.add("-Akora.mapper=${project.projectDir}/src/test/resources/mapper")
+    }
 }
 
 publishing {

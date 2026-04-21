@@ -36,7 +36,7 @@ class UpdateWrapperTest {
         TestUserTable users = TestUserTable.USERS;
 
         SqlRequest request = sqlGenerator.renderUpdate(users, Wrapper.update()
-                .set(users.NAME, null)
+                .setNull(users.NAME)
                 .where(where -> where.eq(users.ID, 1L))
                 .toDefinition(), DbType.MYSQL);
 

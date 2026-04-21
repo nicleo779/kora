@@ -1,7 +1,6 @@
 plugins {
     id("java-library")
     id("maven-publish")
-    id("io.quarkus.extension")
 }
 
 val quarkusVersion: String by project
@@ -13,14 +12,10 @@ java {
     withSourcesJar()
 }
 
-quarkusExtension {
-    deploymentModule.set("kora-quarkus-deployment")
-}
-
 dependencies {
     api(project(":kora-core"))
 
-    implementation(enforcedPlatform("io.quarkus:quarkus-bom:$quarkusVersion"))
+    implementation(platform("io.quarkus:quarkus-bom:$quarkusVersion"))
     implementation("io.quarkus:quarkus-arc")
 
     testImplementation(platform("org.junit:junit-bom:5.10.0"))
@@ -30,6 +25,17 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+tasks.processResources {
+    inputs.property("projectGroup", project.group.toString())
+    inputs.property("projectVersion", project.version.toString())
+    filesMatching("META-INF/quarkus-extension.properties") {
+        expand(
+            "projectGroup" to project.group,
+            "projectVersion" to project.version
+        )
+    }
 }
 
 publishing {

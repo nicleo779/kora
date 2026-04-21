@@ -14,13 +14,13 @@ class GeneratedSupportInstallationTest {
     void supportClassShouldInstallGeneratedTablesAndReflectorsFromGenSubdirectories() throws Exception {
         GeneratedReflectors.clear();
         Tables.clear();
+        Class<?> supportClass = Class.forName("gen.KoraSimpleConfigGenerated");
+        java.lang.reflect.Field installedField = supportClass.getDeclaredField("installed");
+        installedField.setAccessible(true);
         try {
-            Class<?> supportClass = Class.forName("gen.KoraSimpleConfigGenerated");
             assertThrows(ClassNotFoundException.class,
                     () -> Class.forName("gen.com.example.simple.config.KoraSimpleConfigGenerated"));
 
-            java.lang.reflect.Field installedField = supportClass.getDeclaredField("installed");
-            installedField.setAccessible(true);
             installedField.setBoolean(null, false);
             supportClass.getMethod("install").invoke(null);
 
@@ -31,6 +31,7 @@ class GeneratedSupportInstallationTest {
         } finally {
             GeneratedReflectors.clear();
             Tables.clear();
+            installedField.setBoolean(null, false);
         }
     }
 }

@@ -10,7 +10,7 @@ class SqlExecutionContextTest {
     @Test
     void shouldExposeMapperMethodAnnotationsWithoutReflection() {
         AnnotationMeta[] annotations = {
-                new AnnotationMeta("com.example.TestTag", java.util.Map.of("value", "direct", "order", 1))
+                new AnnotationMeta(TestTag.class.getName(), java.util.Map.of("value", "direct", "order", 1))
         };
         SqlExecutionContext context = new SqlExecutionContext(
                 null,
@@ -24,7 +24,7 @@ class SqlExecutionContextTest {
                 true
         );
 
-        AnnotationMeta annotation = context.getMapperMethodAnnotation("com.example.TestTag");
+        AnnotationMeta annotation = context.getMapperMethodAnnotation(TestTag.class.getName());
         assertEquals("direct", annotation.value("value"));
         assertEquals(1, annotation.value("order"));
         assertEquals("direct", context.getMapperMethodAnnotation(TestTag.class).value("value"));

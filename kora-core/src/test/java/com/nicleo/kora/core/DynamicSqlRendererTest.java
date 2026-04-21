@@ -66,7 +66,7 @@ class DynamicSqlRendererTest {
                 new Object[]{new User(null, 18)}
         ));
 
-        assertEquals("select * from user ", boundSql.getSql());
+        assertEquals("select * from user", boundSql.getSql());
         assertArrayEquals(new Object[0], DynamicSqlArgumentResolver.resolve(boundSql));
     }
 

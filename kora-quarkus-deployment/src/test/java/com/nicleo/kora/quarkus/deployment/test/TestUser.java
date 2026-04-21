@@ -1,4 +1,4 @@
-package com.nicleo.kora.quarkus.deployment.test;
+package com.nicleo.kora.quarkus.deployment.test.entity;
 
 import com.nicleo.kora.core.annotation.Reflect;
 

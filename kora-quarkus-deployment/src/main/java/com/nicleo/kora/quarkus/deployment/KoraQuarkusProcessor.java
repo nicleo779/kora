@@ -55,7 +55,7 @@ class KoraQuarkusProcessor {
         additionalBeans.produce(builder.build());
     }
 
-    private void collectKoraScanMetadata(IndexView index, Set<String> mapperPackages, Set<String> supportClasses) {
+    void collectKoraScanMetadata(IndexView index, Set<String> mapperPackages, Set<String> supportClasses) {
         for (AnnotationInstance annotation : index.getAnnotations(KORA_SCAN)) {
             if (annotation.target().kind() != AnnotationTarget.Kind.CLASS) {
                 continue;
@@ -75,7 +75,7 @@ class KoraQuarkusProcessor {
         }
     }
 
-    private Set<String> findMapperImplementations(IndexView index, Set<String> mapperPackages) {
+    Set<String> findMapperImplementations(IndexView index, Set<String> mapperPackages) {
         LinkedHashSet<String> mapperImplementations = new LinkedHashSet<>();
         if (mapperPackages.isEmpty()) {
             return mapperImplementations;

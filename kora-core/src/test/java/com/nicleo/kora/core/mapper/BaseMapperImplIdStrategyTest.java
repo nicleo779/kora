@@ -125,10 +125,10 @@ class BaseMapperImplIdStrategyTest {
         }
 
         @Override
-        public Object updateAndReturnGeneratedKey(String sql, Object[] args) {
+        public <T> T updateAndReturnGeneratedKey(String sql, Object[] args, Class<T> resultType) {
             this.lastSql = sql;
             this.lastArgs = args;
-            return generatedKey;
+            return generatedKey == null ? null : resultType.cast(generatedKey);
         }
 
         @Override
@@ -162,22 +162,22 @@ class BaseMapperImplIdStrategyTest {
 
         @Override
         public <T> T selectOne(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
-            return selectOne(sql,args,resultType);
+            return selectOne(sql, args, resultType);
         }
 
         @Override
         public <T> List<T> selectList(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
-            return selectList(sql,args,resultType);
+            return selectList(sql, args, resultType);
         }
 
         @Override
         public int update(String sql, Object[] args, SqlExecutionContext context) {
-            return update(sql,args);
+            return update(sql, args);
         }
 
         @Override
         public int[] executeBatch(String sql, List<Object[]> batchArgs, SqlExecutionContext context) {
-            return executeBatch(sql,batchArgs);
+            return executeBatch(sql, batchArgs);
         }
 
         @Override

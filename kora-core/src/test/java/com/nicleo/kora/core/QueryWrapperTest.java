@@ -542,7 +542,7 @@ class QueryWrapperTest {
         }
 
         @Override
-        public Object updateAndReturnGeneratedKey(String sql, Object[] args) {
+        public <T> T updateAndReturnGeneratedKey(String sql, Object[] args, Class<T> resultType) {
             return null;
         }
 
@@ -572,22 +572,22 @@ class QueryWrapperTest {
 
         @Override
         public <T> T selectOne(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
-            return null;
+            return selectOne(sql, args, resultType);
         }
 
         @Override
         public <T> List<T> selectList(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
-            return List.of();
+            return selectList(sql, args, resultType);
         }
 
         @Override
         public int update(String sql, Object[] args, SqlExecutionContext context) {
-            return 0;
+            return update(sql, args);
         }
 
         @Override
         public int[] executeBatch(String sql, List<Object[]> batchArgs, SqlExecutionContext context) {
-            return new int[0];
+            return executeBatch(sql, batchArgs);
         }
 
         @Override
@@ -606,6 +606,7 @@ class QueryWrapperTest {
         }
 
         @Override
+        @SuppressWarnings("unchecked")
         public <T> List<T> executeQuery(String sql, Object[] args, RowMapper<T> rowMapper) {
             if (sql.startsWith("select count(*)")) {
                 return List.of((T) Long.valueOf(3L));
