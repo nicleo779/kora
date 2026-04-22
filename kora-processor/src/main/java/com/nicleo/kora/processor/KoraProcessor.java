@@ -610,10 +610,6 @@ public class KoraProcessor extends AbstractProcessor {
         String packageName = generatedModelPackageName(entityType);
         String generatedSimpleName = tableSimpleName(entityType);
         String qualifiedName = packageName.isEmpty() ? generatedSimpleName : packageName + "." + generatedSimpleName;
-        if (generatedSourceTypeExists(qualifiedName)) {
-            generatedSupportIndexStore.upsertTable(entityType.getQualifiedName().toString(), qualifiedName);
-            return;
-        }
         writeSourceFile(qualifiedName, entityType, buildMetaSource(packageName, generatedSimpleName, entityType));
         generatedSupportIndexStore.upsertTable(entityType.getQualifiedName().toString(), qualifiedName);
     }
@@ -632,9 +628,6 @@ public class KoraProcessor extends AbstractProcessor {
     private void writeSupportClass(ScanSpec scanSpec, List<TypeElement> entityTypes) throws IOException {
         String qualifiedName = supportClassName(scanSpec);
         if (!generatedSupports.add(qualifiedName)) {
-            return;
-        }
-        if (generatedSourceTypeExists(qualifiedName)) {
             return;
         }
         JavaFileObject fileObject = scanSpec.configType == null
@@ -666,10 +659,6 @@ public class KoraProcessor extends AbstractProcessor {
         try (Writer writer = fileObject.openWriter()) {
             writer.write(source);
         }
-    }
-
-    private boolean generatedSourceTypeExists(String qualifiedName) {
-        return elements.getTypeElement(qualifiedName) != null;
     }
 
     private void writeClassFile(String qualifiedName, Element originatingElement, byte[] bytecode) throws IOException {
@@ -1843,11 +1832,11 @@ public class KoraProcessor extends AbstractProcessor {
         }
         persistedSupportIndexLoaded = true;
         generatedSupportIndexStore.load((entityTypeName, generatedTypeName) -> {
-            if (!generatedTypeName.endsWith("Table")) {
-                return true;
-            }
             TypeElement entityType = elements.getTypeElement(entityTypeName);
-            return entityType == null || shouldCollectScannedType(entityType);
+            if (entityType == null) {
+                return false;
+            }
+            return shouldCollectScannedType(entityType);
         });
     }
 
