@@ -38,7 +38,9 @@ class KoraQuarkusProcessor {
         collectKoraScanMetadata(index, mapperPackages, supportClasses);
 
         if (!supportClasses.isEmpty()) {
-            reflectiveClasses.produce(new ReflectiveClassBuildItem(true, false, supportClasses.toArray(String[]::new)));
+            reflectiveClasses.produce(ReflectiveClassBuildItem.builder(supportClasses.toArray(String[]::new))
+                    .methods()
+                    .build());
         }
 
         Set<String> mapperImplementations = findMapperImplementations(index, mapperPackages);

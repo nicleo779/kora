@@ -779,19 +779,19 @@ public class KoraProcessor extends AbstractProcessor {
     private String buildSupportSource(ScanSpec scanSpec, List<TypeElement> entityTypes) {
         Map<String, String> reflectorRegistrations = new LinkedHashMap<>();
         for (ReflectSpec reflectSpec : reflectSpecs.values()) {
-            String entityTypeName = runtimeTypeName(reflectSpec.typeElement());
+            String entitySourceName = reflectSpec.typeElement().getQualifiedName().toString();
             reflectorRegistrations.putIfAbsent(
-                    entityTypeName,
-                    buildReflectorRegistration(entityTypeName, reflectorTypeName(reflectSpec.typeElement(), reflectSpec.suffix()))
+                    entitySourceName,
+                    buildReflectorRegistration(entitySourceName, reflectorTypeName(reflectSpec.typeElement(), reflectSpec.suffix()))
             );
         }
 
         Map<String, String> tableRegistrations = new LinkedHashMap<>();
         for (TypeElement entityType : entityTypes) {
-            String entityTypeName = runtimeTypeName(entityType);
+            String entitySourceName = entityType.getQualifiedName().toString();
             tableRegistrations.putIfAbsent(
-                    entityTypeName,
-                    buildTableRegistration(entityTypeName, generatedModelPackageName(entityType) + "." + tableSimpleName(entityType))
+                    entitySourceName,
+                    buildTableRegistration(entitySourceName, generatedModelPackageName(entityType) + "." + tableSimpleName(entityType))
             );
         }
 
@@ -808,6 +808,7 @@ public class KoraProcessor extends AbstractProcessor {
                     private %s() {
                     }
 
+                    @SuppressWarnings({"rawtypes", "unchecked"})
                     public static void install() {
                         if (installed) {
                             return;
@@ -817,32 +818,6 @@ public class KoraProcessor extends AbstractProcessor {
                                 return;
                             }
                 %s%s            installed = true;
-                        }
-                    }
-
-                    @SuppressWarnings({"rawtypes", "unchecked"})
-                    private static void registerReflector(String entityTypeName, String reflectorTypeName) {
-                        try {
-                            Class<?> entityType = Class.forName(entityTypeName);
-                            Class<?> reflectorType = Class.forName(reflectorTypeName);
-                            Object reflector = reflectorType.getDeclaredConstructor().newInstance();
-                            com.nicleo.kora.core.runtime.GeneratedReflectors.register((Class) entityType,
-                                    (com.nicleo.kora.core.runtime.GeneratedReflector) reflector);
-                        } catch (ReflectiveOperationException ex) {
-                            throw new IllegalStateException("Failed to register generated reflector: " + reflectorTypeName, ex);
-                        }
-                    }
-
-                    @SuppressWarnings({"rawtypes", "unchecked"})
-                    private static void registerTable(String entityTypeName, String tableTypeName) {
-                        try {
-                            Class<?> entityType = Class.forName(entityTypeName);
-                            Class<?> tableType = Class.forName(tableTypeName);
-                            Object table = tableType.getField("TABLE").get(null);
-                            com.nicleo.kora.core.query.Tables.register((Class) entityType,
-                                    (com.nicleo.kora.core.query.EntityTable) table);
-                        } catch (ReflectiveOperationException ex) {
-                            throw new IllegalStateException("Failed to register generated table: " + tableTypeName, ex);
                         }
                     }
                 }
@@ -857,9 +832,10 @@ public class KoraProcessor extends AbstractProcessor {
                 if (entityType == null) {
                     continue;
                 }
+                String entitySourceName = entityType.getQualifiedName().toString();
                 reflectorRegistrations.putIfAbsent(
-                        runtimeTypeName(entityType),
-                        buildReflectorRegistration(runtimeTypeName(entityType), registration.reflectorTypeName())
+                        entitySourceName,
+                        buildReflectorRegistration(entitySourceName, registration.reflectorTypeName())
                 );
             }
             for (GeneratedSupportIndexStore.TableRegistration registration : generatedSupportIndexStore.tables()) {
@@ -867,23 +843,24 @@ public class KoraProcessor extends AbstractProcessor {
                 if (entityType == null || !shouldCollectScannedType(entityType)) {
                     continue;
                 }
+                String entitySourceName = entityType.getQualifiedName().toString();
                 tableRegistrations.putIfAbsent(
-                        runtimeTypeName(entityType),
-                        buildTableRegistration(runtimeTypeName(entityType), registration.tableTypeName())
+                        entitySourceName,
+                        buildTableRegistration(entitySourceName, registration.tableTypeName())
                 );
             }
         } catch (Exception ignored) {
         }
     }
 
-    private String buildReflectorRegistration(String entityTypeName, String reflectorTypeName) {
-        return "            registerReflector(\"%s\", \"%s\");%n"
-                .formatted(escapeJava(entityTypeName), escapeJava(reflectorTypeName));
+    private String buildReflectorRegistration(String entitySourceName, String reflectorTypeName) {
+        return "            com.nicleo.kora.core.runtime.GeneratedReflectors.register(%s.class, new %s());%n"
+                .formatted(entitySourceName, reflectorTypeName);
     }
 
-    private String buildTableRegistration(String entityTypeName, String tableTypeName) {
-        return "            registerTable(\"%s\", \"%s\");%n"
-                .formatted(escapeJava(entityTypeName), escapeJava(tableTypeName));
+    private String buildTableRegistration(String entitySourceName, String tableTypeName) {
+        return "            com.nicleo.kora.core.query.Tables.register(%s.class, %s.TABLE);%n"
+                .formatted(entitySourceName, tableTypeName);
     }
 
     private boolean isListReturn(TypeMirror returnType) {
@@ -1692,10 +1669,6 @@ public class KoraProcessor extends AbstractProcessor {
     private String packageNameOf(TypeElement typeElement) {
         PackageElement packageElement = elements.getPackageOf(typeElement);
         return packageElement.isUnnamed() ? "" : packageElement.getQualifiedName().toString();
-    }
-
-    private String runtimeTypeName(TypeElement typeElement) {
-        return elements.getBinaryName(typeElement).toString();
     }
 
     private String generatedModelPackageName(TypeElement typeElement) {
