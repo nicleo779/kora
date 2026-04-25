@@ -1,8 +1,6 @@
 package com.nicleo.kora.core.query;
 
-import com.nicleo.kora.core.runtime.DbType;
-
-import java.util.List;
+import com.nicleo.kora.core.runtime.dialect.RenderContext;
 import java.util.Objects;
 
 public final class Functions {
@@ -35,7 +33,7 @@ public final class Functions {
         Objects.requireNonNull(condition, "condition");
         Objects.requireNonNull(whenTrue, "whenTrue");
         Objects.requireNonNull(whenFalse, "whenFalse");
-        return new FunctionExpression((sql, args, dbType) -> appendIf(sql, args, dbType, condition, whenTrue, whenFalse));
+        return new FunctionExpression(context -> appendIf(context, condition, whenTrue, whenFalse));
     }
 
     public static SqlExpression ifElse(Condition condition, Object whenTrue, Object whenFalse) {
@@ -44,37 +42,35 @@ public final class Functions {
 
     private static SqlExpression simple(String functionName, SqlExpression expression) {
         Objects.requireNonNull(expression, "expression");
-        return new FunctionExpression((sql, args, dbType) -> {
-            sql.append(functionName).append('(');
-            expression.appendTo(sql, args, dbType);
-            sql.append(')');
+        return new FunctionExpression(context -> {
+            context.sql().append(functionName).append('(');
+            expression.appendTo(context);
+            context.sql().append(')');
         });
     }
 
-    private static void appendIf(StringBuilder sql,
-                                 List<Object> args,
-                                 DbType dbType,
+    private static void appendIf(RenderContext context,
                                  Condition condition,
                                  SqlExpression whenTrue,
                                  SqlExpression whenFalse) {
-        switch (dbType) {
+        switch (context.dialect().dbType()) {
             case MYSQL, MARIADB -> {
-                sql.append("IF(");
-                condition.appendTo(sql, args, dbType);
-                sql.append(", ");
-                whenTrue.appendTo(sql, args, dbType);
-                sql.append(", ");
-                whenFalse.appendTo(sql, args, dbType);
-                sql.append(')');
+                context.sql().append("IF(");
+                condition.appendTo(context);
+                context.sql().append(", ");
+                whenTrue.appendTo(context);
+                context.sql().append(", ");
+                whenFalse.appendTo(context);
+                context.sql().append(')');
             }
             default -> {
-                sql.append("CASE WHEN ");
-                condition.appendTo(sql, args, dbType);
-                sql.append(" THEN ");
-                whenTrue.appendTo(sql, args, dbType);
-                sql.append(" ELSE ");
-                whenFalse.appendTo(sql, args, dbType);
-                sql.append(" END");
+                context.sql().append("CASE WHEN ");
+                condition.appendTo(context);
+                context.sql().append(" THEN ");
+                whenTrue.appendTo(context);
+                context.sql().append(" ELSE ");
+                whenFalse.appendTo(context);
+                context.sql().append(" END");
             }
         }
     }

@@ -39,7 +39,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.UUID;
 
 public class DefaultSqlExecutor implements SqlExecutor {
     private final DataSource dataSource;
@@ -249,21 +248,12 @@ public class DefaultSqlExecutor implements SqlExecutor {
     protected Connection openConnection() throws SQLException {
         return dataSource.getConnection();
     }
-
     private <T> RowMapper<T> createRowMapper(Class<T> resultType) {
         if (Map.class.isAssignableFrom(resultType)) {
             return resultSet -> resultType.cast(readRowAsMap(resultSet));
         }
         if (isSimpleResultType(resultType)) {
-            return resultSet -> {
-                Object converted = typeConverter.cast(resultSet, 1, resultType);
-                if (converted == null) {
-                    return null;
-                }
-                @SuppressWarnings("unchecked")
-                T value = (T) converted;
-                return value;
-            };
+            return resultSet -> typeConverter.cast(resultSet, 1, resultType);
         }
         GeneratedReflector<T> reflector = GeneratedReflectors.get(resultType);
         return new GeneratedRowMapper<>(resultType, reflector, typeConverter);

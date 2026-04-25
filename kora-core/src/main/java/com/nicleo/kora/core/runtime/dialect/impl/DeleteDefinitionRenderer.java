@@ -13,6 +13,8 @@ import java.util.List;
 public final class DeleteDefinitionRenderer implements DeleteRenderer {
     @Override
     public SqlRequest render(DeleteModel deleteModel, RenderContext context) {
+        QueryDefinitionRenderer.configureSingleTableQualification(deleteModel.table(), context);
+
         var sql = context.sql();
         sql.append("delete from ").append(deleteModel.table().tableReference(context.dialect().dbType()));
         QueryDefinitionRenderer.appendWhere(

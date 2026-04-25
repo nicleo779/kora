@@ -1,9 +1,7 @@
 package com.nicleo.kora.core.query;
 
-import com.nicleo.kora.core.runtime.DbType;
+import com.nicleo.kora.core.runtime.dialect.RenderContext;
 import com.nicleo.kora.core.runtime.dialect.SqlDialects;
-
-import java.util.List;
 
 final class AliasReferenceExpression implements SqlExpression {
     private final String alias;
@@ -13,7 +11,7 @@ final class AliasReferenceExpression implements SqlExpression {
     }
 
     @Override
-    public void appendTo(StringBuilder sql, List<Object> args, DbType dbType) {
-        sql.append(SqlDialects.identifiers(dbType).quote(alias));
+    public void appendTo(RenderContext context) {
+        context.sql().append(SqlDialects.identifiers(context.dialect().dbType()).quote(alias));
     }
 }

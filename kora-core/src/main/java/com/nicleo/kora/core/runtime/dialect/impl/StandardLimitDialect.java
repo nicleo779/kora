@@ -16,18 +16,18 @@ public final class StandardLimitDialect extends AbstractSqlDialect {
     }
 
     public static StandardLimitDialect mysql() {
-        return new StandardLimitDialect("mysql", DbType.MYSQL, new StandardIdentifierPolicy("`"));
+        return new StandardLimitDialect("mysql", DbType.MYSQL, NativeIdentifierPolicy.mysql());
     }
 
     public static StandardLimitDialect mariaDb() {
-        return new StandardLimitDialect("mariadb", DbType.MARIADB, new StandardIdentifierPolicy("`"));
+        return new StandardLimitDialect("mariadb", DbType.MARIADB, NativeIdentifierPolicy.mariaDb());
     }
 
     public static StandardLimitDialect sqlite() {
-        return new StandardLimitDialect("sqlite", DbType.SQLITE, new StandardIdentifierPolicy("\""));
+        return new StandardLimitDialect("sqlite", DbType.SQLITE, NativeIdentifierPolicy.sqlite());
     }
 
     public static StandardLimitDialect h2() {
-        return new StandardLimitDialect("h2", DbType.H2, new PlainIdentifierPolicy());
+        return new StandardLimitDialect("h2", DbType.H2, NativeIdentifierPolicy.h2());
     }
 }

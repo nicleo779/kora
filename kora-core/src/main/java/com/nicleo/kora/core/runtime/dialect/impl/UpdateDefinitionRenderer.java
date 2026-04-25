@@ -14,6 +14,8 @@ import java.util.List;
 public final class UpdateDefinitionRenderer implements UpdateRenderer {
     @Override
     public SqlRequest render(UpdateModel updateModel, RenderContext context) {
+        QueryDefinitionRenderer.configureSingleTableQualification(updateModel.table(), context);
+
         StringBuilder sql = context.sql();
         List<Object> args = context.args();
         sql.append("update ").append(updateModel.table().tableReference(context.dialect().dbType())).append(" set ");
@@ -23,7 +25,7 @@ public final class UpdateDefinitionRenderer implements UpdateRenderer {
             }
             UpdateAssignment assignment = updateModel.definition().assignments().get(i);
             sql.append(context.dialect().identifiers().quote(assignment.column().columnName())).append(" = ");
-            assignment.value().appendTo(sql, args, context.dialect().dbType());
+            assignment.value().appendTo(context);
         }
         QueryDefinitionRenderer.appendWhere(
                 new WhereClause(updateModel.definition().where() == null ? null : updateModel.definition().where().condition()),
