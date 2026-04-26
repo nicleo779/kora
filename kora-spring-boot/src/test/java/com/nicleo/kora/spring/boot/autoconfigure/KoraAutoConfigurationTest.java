@@ -1,12 +1,6 @@
 package com.nicleo.kora.spring.boot.autoconfigure;
 
-import com.nicleo.kora.core.runtime.DefaultSqlPagingSupport;
-import com.nicleo.kora.core.runtime.FieldInfo;
-import com.nicleo.kora.core.runtime.GeneratedReflector;
-import com.nicleo.kora.core.runtime.GeneratedReflectors;
-import com.nicleo.kora.core.runtime.SqlInterceptor;
-import com.nicleo.kora.core.runtime.SqlPagingSupport;
-import com.nicleo.kora.core.runtime.SqlExecutor;
+import com.nicleo.kora.core.runtime.*;
 import com.nicleo.kora.core.query.Page;
 import com.nicleo.kora.core.query.Paging;
 import com.nicleo.kora.core.query.QueryWrapper;
@@ -40,6 +34,11 @@ class KoraAutoConfigurationTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(KoraAutoConfiguration.class));
 
+    private static void registerTxRowReflector() {
+        GeneratedReflectors.clear();
+        GeneratedReflectors.register(TxRow.class, new TxRowReflector());
+    }
+
     @Test
     void shouldAutoConfigureSqlExecutorFromDataSource() {
         contextRunner
@@ -70,17 +69,7 @@ class KoraAutoConfigurationTest {
         contextRunner
                 .withUserConfiguration(DataSourceConfig.class, TransactionConfig.class)
                 .run(context -> {
-                    GeneratedReflectors.clear();
-                    GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
-                        @Override
-                        @SuppressWarnings("unchecked")
-                        public <T> GeneratedReflector<T> get(Class<T> type) {
-                            if (type == TxRow.class) {
-                                return (GeneratedReflector<T>) new TxRowReflector();
-                            }
-                            throw new IllegalArgumentException(type.getName());
-                        }
-                    });
+                    registerTxRowReflector();
 
                     DataSource dataSource = context.getBean(DataSource.class);
                     try (var connection = dataSource.getConnection();
@@ -110,17 +99,7 @@ class KoraAutoConfigurationTest {
         contextRunner
                 .withUserConfiguration(DataSourceConfig.class)
                 .run(context -> {
-                    GeneratedReflectors.clear();
-                    GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
-                        @Override
-                        @SuppressWarnings("unchecked")
-                        public <T> GeneratedReflector<T> get(Class<T> type) {
-                            if (type == TxRow.class) {
-                                return (GeneratedReflector<T>) new TxRowReflector();
-                            }
-                            throw new IllegalArgumentException(type.getName());
-                        }
-                    });
+                    registerTxRowReflector();
 
                     DataSource dataSource = context.getBean(DataSource.class);
                     try (var connection = dataSource.getConnection();
@@ -164,17 +143,7 @@ class KoraAutoConfigurationTest {
         contextRunner
                 .withUserConfiguration(DataSourceConfig.class)
                 .run(context -> {
-                    GeneratedReflectors.clear();
-                    GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
-                        @Override
-                        @SuppressWarnings("unchecked")
-                        public <T> GeneratedReflector<T> get(Class<T> type) {
-                            if (type == TxRow.class) {
-                                return (GeneratedReflector<T>) new TxRowReflector();
-                            }
-                            throw new IllegalArgumentException(type.getName());
-                        }
-                    });
+                    registerTxRowReflector();
 
                     DataSource dataSource = context.getBean(DataSource.class);
                     try (var connection = dataSource.getConnection();
@@ -198,17 +167,7 @@ class KoraAutoConfigurationTest {
         contextRunner
                 .withUserConfiguration(DataSourceConfig.class)
                 .run(context -> {
-                    GeneratedReflectors.clear();
-                    GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
-                        @Override
-                        @SuppressWarnings("unchecked")
-                        public <T> GeneratedReflector<T> get(Class<T> type) {
-                            if (type == TxRow.class) {
-                                return (GeneratedReflector<T>) new TxRowReflector();
-                            }
-                            throw new IllegalArgumentException(type.getName());
-                        }
-                    });
+                    registerTxRowReflector();
                     Tables.register(TxRow.class, TxRowTable.TX_DEMO);
 
                     DataSource dataSource = context.getBean(DataSource.class);
@@ -235,17 +194,7 @@ class KoraAutoConfigurationTest {
         contextRunner
                 .withUserConfiguration(DataSourceConfig.class)
                 .run(context -> {
-                    GeneratedReflectors.clear();
-                    GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
-                        @Override
-                        @SuppressWarnings("unchecked")
-                        public <T> GeneratedReflector<T> get(Class<T> type) {
-                            if (type == TxRow.class) {
-                                return (GeneratedReflector<T>) new TxRowReflector();
-                            }
-                            throw new IllegalArgumentException(type.getName());
-                        }
-                    });
+                    registerTxRowReflector();
                     Tables.register(TxRow.class, TxRowTable.TX_DEMO);
 
                     DataSource dataSource = context.getBean(DataSource.class);
@@ -418,8 +367,23 @@ class KoraAutoConfigurationTest {
         }
 
         @Override
+        public com.nicleo.kora.core.runtime.ClassInfo getClassInfo() {
+            return null;
+        }
+
+        @Override
+        public Object invoke(TxRow target, int index, Object[] args) {
+            return null;
+        }
+
+        @Override
         public Object invoke(TxRow target, String method, Object[] args) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void set(TxRow target, int index, Object value) {
+
         }
 
         @Override
@@ -430,6 +394,11 @@ class KoraAutoConfigurationTest {
                 default -> {
                 }
             }
+        }
+
+        @Override
+        public Object get(TxRow target, int index) {
+            return null;
         }
 
         @Override
@@ -447,12 +416,32 @@ class KoraAutoConfigurationTest {
         }
 
         @Override
+        public FieldInfo getField(int index) {
+            return null;
+        }
+
+        @Override
         public FieldInfo getField(String field) {
             return switch (field) {
                 case "id" -> new FieldInfo("id", Long.class, 0, null, new com.nicleo.kora.core.runtime.AnnotationMeta[0]);
                 case "name" -> new FieldInfo("name", String.class, 0, null, new com.nicleo.kora.core.runtime.AnnotationMeta[0]);
                 default -> null;
             };
+        }
+
+        @Override
+        public String[] getMethods() {
+            return new String[0];
+        }
+
+        @Override
+        public int getMethod(int index) {
+            return 0;
+        }
+
+        @Override
+        public MethodInfo[] getMethod(String name) {
+            return new MethodInfo[0];
         }
     }
 }

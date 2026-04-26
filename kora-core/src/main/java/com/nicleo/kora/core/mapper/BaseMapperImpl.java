@@ -150,7 +150,9 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
         InsertSpec spec = buildInsertSpec(entity);
         if (spec.assignGeneratedId()) {
             Object generatedKey = sqlExecutor.updateAndReturnGeneratedKey(spec.sql(), spec.args(), entityTable.idColumn().javaType());
-            GeneratedReflectors.get(entityClass).set(entity, idFieldName(), generatedKey);
+            GeneratedReflector<T> reflector = GeneratedReflectors.get(entityClass);
+            int idFieldIndex = reflector.fieldIndex(idFieldName());
+            reflector.set(entity, idFieldIndex, generatedKey);
             return generatedKey == null ? 0 : 1;
         }
         return sqlExecutor.update(spec.sql(), spec.args());
@@ -248,14 +250,17 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
 
     private InsertSpec buildInsertSpec(T entity) {
         GeneratedReflector<T> reflector = GeneratedReflectors.get(entityClass);
+        String[] fields = reflector.getFields();
+        int idFieldIndex = reflector.fieldIndex(idFieldName());
         List<String> columns = new ArrayList<>();
         List<Object> args = new ArrayList<>();
-        boolean assignGeneratedId = appendInsertId(entity, reflector, columns, args);
-        for (String field : reflector.fieldNamesView()) {
-            if (isIdField(field)) {
+        boolean assignGeneratedId = appendInsertId(entity, reflector, idFieldIndex, columns, args);
+        for (int fieldIndex = 0; fieldIndex < fields.length; fieldIndex++) {
+            if (fieldIndex == idFieldIndex) {
                 continue;
             }
-            Object value = reflector.get(entity, field);
+            String field = fields[fieldIndex];
+            Object value = reflector.get(entity, fieldIndex);
             if (value == null) {
                 continue;
             }
@@ -265,24 +270,13 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
         if (columns.isEmpty()) {
             throw new SqlExecutorException("Insert requires at least one non-null field: " + entityClass.getName());
         }
-        try {
-            SqlRequest request = sqlExecutor.getSqlGenerator().renderInsert(entityTable, columns, args, sqlExecutor.getDbType());
-            return new InsertSpec(request.getSql(), request.getArgs(), assignGeneratedId);
-        } catch (RuntimeException ex) {
-            StringBuilder sql = new StringBuilder("insert into ")
-                    .append(entityTable.tableName())
-                    .append(" (")
-                    .append(String.join(", ", columns))
-                    .append(") values (");
-            appendPlaceholders(sql, columns.size());
-            sql.append(')');
-            return new InsertSpec(sql.toString(), args.toArray(), assignGeneratedId);
-        }
+        SqlRequest request = sqlExecutor.getSqlGenerator().renderInsert(entityTable, columns, args, sqlExecutor.getDbType());
+        return new InsertSpec(request.getSql(), request.getArgs(), assignGeneratedId);
     }
 
-    private boolean appendInsertId(T entity, GeneratedReflector<T> reflector, List<String> columns, List<Object> args) {
+    private boolean appendInsertId(T entity, GeneratedReflector<T> reflector, int idFieldIndex, List<String> columns, List<Object> args) {
         if (entityTable.idStrategy() == com.nicleo.kora.core.annotation.IdStrategy.NONE) {
-            Object idValue = reflector.get(entity, idFieldName());
+            Object idValue = reflector.get(entity, idFieldIndex);
             if (idValue != null) {
                 columns.add(entityTable.idColumn().columnName());
                 args.add(idValue);
@@ -290,23 +284,16 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
             }
             return true;
         }
-        String idFieldName = idFieldName();
-        Object idValue = reflector.get(entity, idFieldName);
+        Object idValue = reflector.get(entity, idFieldIndex);
         if (idValue == null) {
             idValue = generateId(entity);
         }
         if (idValue != null) {
-            reflector.set(entity, idFieldName, idValue);
+            reflector.set(entity, idFieldIndex, idValue);
             columns.add(entityTable.idColumn().columnName());
             args.add(idValue);
         }
         return false;
-    }
-
-    private void assignGeneratedId(T entity, GeneratedReflector<T> reflector, Object generatedKey) {
-        if (generatedKey == null) {
-            return;
-        }
     }
 
     private Object generateId(T entity) {
@@ -315,16 +302,19 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
 
     private UpdateByIdSpec buildUpdateByIdSpec(T entity) {
         GeneratedReflector<T> reflector = GeneratedReflectors.get(entityClass);
-        Object idValue = reflector.get(entity, idFieldName());
+        String[] fields = reflector.getFields();
+        int idFieldIndex = reflector.fieldIndex(idFieldName());
+        Object idValue = reflector.get(entity, idFieldIndex);
         if (idValue == null) {
             throw new SqlExecutorException("Update by id requires non-null id field: " + entityClass.getName());
         }
         List<UpdateAssignment> updateAssignments = new ArrayList<>();
-        for (String field : reflector.fieldNamesView()) {
-            if (isIdField(field)) {
+        for (int fieldIndex = 0; fieldIndex < fields.length; fieldIndex++) {
+            if (fieldIndex == idFieldIndex) {
                 continue;
             }
-            Object value = reflector.get(entity, field);
+            String field = fields[fieldIndex];
+            Object value = reflector.get(entity, fieldIndex);
             if (value == null) {
                 continue;
             }
@@ -336,36 +326,15 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
         if (updateAssignments.isEmpty()) {
             return null;
         }
-        try {
-            SqlRequest request = sqlExecutor.getSqlGenerator().renderUpdate(
-                    entityTable,
-                    new UpdateDefinition(
-                            updateAssignments,
-                            new WhereDefinition(Conditions.eq(entityTable.idColumn(), idValue), List.of(), null, null)
-                    ),
-                    sqlExecutor.getDbType()
-            );
-            return new UpdateByIdSpec(request.getSql(), request.getArgs());
-        } catch (RuntimeException ex) {
-            List<Object> args = new ArrayList<>();
-            List<String> assignments = new ArrayList<>();
-            for (String field : reflector.fieldNamesView()) {
-                if (isIdField(field)) {
-                    continue;
-                }
-                Object value = reflector.get(entity, field);
-                if (value == null) {
-                    continue;
-                }
-                assignments.add(entityTable.columnName(field) + " = ?");
-                args.add(value);
-            }
-            args.add(idValue);
-            String sql = "update " + entityTable.tableName()
-                    + " set " + String.join(", ", assignments)
-                    + " where " + entityTable.idColumn().columnName() + " = ?";
-            return new UpdateByIdSpec(sql, args.toArray());
-        }
+        SqlRequest request = sqlExecutor.getSqlGenerator().renderUpdate(
+                entityTable,
+                new UpdateDefinition(
+                        updateAssignments,
+                        new WhereDefinition(Conditions.eq(entityTable.idColumn(), idValue), List.of(), null, null)
+                ),
+                sqlExecutor.getDbType()
+        );
+        return new UpdateByIdSpec(request.getSql(), request.getArgs());
     }
 
     private int executeGroupedBatch(Map<String, List<Object[]>> batchGroups) {

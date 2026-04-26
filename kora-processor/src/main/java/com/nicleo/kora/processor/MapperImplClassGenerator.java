@@ -34,6 +34,7 @@ final class MapperImplClassGenerator {
     private static final String DYNAMIC_SQL_NODE_DESC = "Lcom/nicleo/kora/core/dynamic/DynamicSqlNode;";
     private static final String ANNOTATION_META = "com/nicleo/kora/core/runtime/AnnotationMeta";
     private static final String ANNOTATION_META_DESC = "Lcom/nicleo/kora/core/runtime/AnnotationMeta;";
+    private static final String OBJECT_ARRAY_DESC = "[Ljava/lang/Object;";
     private static final String GENERATED_MAPPER_SUPPORT = "com/nicleo/kora/core/runtime/GeneratedMapperSupport";
     private static final String SQL_NODES = "com/nicleo/kora/core/dynamic/SqlNodes";
 
@@ -57,6 +58,7 @@ final class MapperImplClassGenerator {
 
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "sqlExecutor", SQL_EXECUTOR_DESC, null, null).visitEnd();
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "NO_ANNOTATIONS", "[" + ANNOTATION_META_DESC, null, null).visitEnd();
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "NO_PARAMETER_VALUES", OBJECT_ARRAY_DESC, null, null).visitEnd();
         for (KoraProcessor.MapperCapabilityDelegateSpec delegate : capabilityDelegates) {
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, delegate.fieldName(), AsmUtils.descriptor(delegate.interfaceErasedTypeLiteral()), null, null).visitEnd();
         }
@@ -65,6 +67,8 @@ final class MapperImplClassGenerator {
                     context.statementFieldName(mapperMethod.statement().id()), DYNAMIC_SQL_NODE_DESC, null, null).visitEnd();
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL,
                     methodAnnotationsFieldName(mapperMethod.statement().id()), "[" + ANNOTATION_META_DESC, null, null).visitEnd();
+            cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL,
+                    methodParameterNamesFieldName(mapperMethod.statement().id()), "[Ljava/lang/String;", null, null).visitEnd();
         }
 
         writeClinit(cw, classInternalName, mapperMethods);
@@ -89,9 +93,16 @@ final class MapperImplClassGenerator {
         AsmUtils.pushInt(mv, 0);
         mv.visitTypeInsn(Opcodes.ANEWARRAY, ANNOTATION_META);
         mv.visitFieldInsn(Opcodes.PUTSTATIC, classInternalName, "NO_ANNOTATIONS", "[" + ANNOTATION_META_DESC);
+        AsmUtils.pushInt(mv, 0);
+        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
+        mv.visitFieldInsn(Opcodes.PUTSTATIC, classInternalName, "NO_PARAMETER_VALUES", OBJECT_ARRAY_DESC);
         for (KoraProcessor.MapperMethodSpec mapperMethod : mapperMethods) {
             emitMethodAnnotationArray(mv, mapperMethod.method().getAnnotationMirrors(), classInternalName);
             mv.visitFieldInsn(Opcodes.PUTSTATIC, classInternalName, methodAnnotationsFieldName(mapperMethod.statement().id()), "[" + ANNOTATION_META_DESC);
+            pushStringArray(mv, mapperMethod.method().getParameters().stream()
+                    .map(parameter -> parameter.getSimpleName().toString())
+                    .toList());
+            mv.visitFieldInsn(Opcodes.PUTSTATIC, classInternalName, methodParameterNamesFieldName(mapperMethod.statement().id()), "[Ljava/lang/String;");
             emitDynamicSqlNode(mv, mapperMethod.statement().rootSqlNode());
             mv.visitFieldInsn(Opcodes.PUTSTATIC, classInternalName, context.statementFieldName(mapperMethod.statement().id()), DYNAMIC_SQL_NODE_DESC);
         }
@@ -159,13 +170,10 @@ final class MapperImplClassGenerator {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, method.getSimpleName().toString(), methodDescriptor, null, null);
         mv.visitCode();
 
-        pushStringArray(mv, parameters.stream().map(parameter -> parameter.getSimpleName().toString()).toList());
-        pushParameterValuesArray(mv, parameters);
+        pushParameterValuesArray(mv, classInternalName, parameters);
 
         int valuesLocal = nextLocalIndex(parameters);
         mv.visitVarInsn(Opcodes.ASTORE, valuesLocal);
-        int namesLocal = valuesLocal + 1;
-        mv.visitVarInsn(Opcodes.ASTORE, namesLocal);
 
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, classInternalName, "sqlExecutor", SQL_EXECUTOR_DESC);
@@ -173,7 +181,7 @@ final class MapperImplClassGenerator {
         mv.visitLdcInsn(statement.id());
         mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, methodAnnotationsFieldName(statement.id()), "[" + ANNOTATION_META_DESC);
         mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, context.statementFieldName(statement.id()), DYNAMIC_SQL_NODE_DESC);
-        mv.visitVarInsn(Opcodes.ALOAD, namesLocal);
+        mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, methodParameterNamesFieldName(statement.id()), "[Ljava/lang/String;");
         mv.visitVarInsn(Opcodes.ALOAD, valuesLocal);
 
         if (statement.commandType() == SqlCommandType.SELECT) {
@@ -297,7 +305,11 @@ final class MapperImplClassGenerator {
         AsmUtils.pushStringArray(mv, values);
     }
 
-    private void pushParameterValuesArray(MethodVisitor mv, List<? extends VariableElement> parameters) {
+    private void pushParameterValuesArray(MethodVisitor mv, String classInternalName, List<? extends VariableElement> parameters) {
+        if (parameters.isEmpty()) {
+            mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, "NO_PARAMETER_VALUES", OBJECT_ARRAY_DESC);
+            return;
+        }
         AsmUtils.pushInt(mv, parameters.size());
         mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
         int localIndex = 1;
@@ -316,6 +328,10 @@ final class MapperImplClassGenerator {
 
     private String methodAnnotationsFieldName(String statementId) {
         return context.statementFieldName(statementId) + "_ANNOTATIONS";
+    }
+
+    private String methodParameterNamesFieldName(String statementId) {
+        return context.statementFieldName(statementId) + "_PARAMETER_NAMES";
     }
 
     private void emitMethodAnnotationArray(MethodVisitor mv, List<? extends AnnotationMirror> annotations, String classInternalName) {

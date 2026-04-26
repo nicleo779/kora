@@ -1,5 +1,5 @@
 group = "com.nicleo"
-version = "1.1.1"
+version = "1.1.2"
 
 subprojects {
     group = rootProject.group

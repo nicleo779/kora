@@ -3,8 +3,8 @@ package com.nicleo.kora.core.runtime;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class GeneratedReflectorsTest {
     @BeforeEach
@@ -13,27 +13,11 @@ class GeneratedReflectorsTest {
     }
 
     @Test
-    void shouldResolveAcrossMultipleInstalledResolvers() {
+    void shouldResolveRegisteredReflectors() {
         AlphaReflector alphaReflector = new AlphaReflector();
         BetaReflector betaReflector = new BetaReflector();
-        GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
-            @Override
-            public <T> GeneratedReflector<T> get(Class<T> type) {
-                if (type == Alpha.class) {
-                    return cast(alphaReflector);
-                }
-                throw new IllegalArgumentException(type.getName());
-            }
-        });
-        GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
-            @Override
-            public <T> GeneratedReflector<T> get(Class<T> type) {
-                if (type == Beta.class) {
-                    return cast(betaReflector);
-                }
-                throw new IllegalArgumentException(type.getName());
-            }
-        });
+        GeneratedReflectors.register(Alpha.class, alphaReflector);
+        GeneratedReflectors.register(Beta.class, betaReflector);
 
         assertSame(alphaReflector, GeneratedReflectors.get(Alpha.class));
         assertSame(betaReflector, GeneratedReflectors.get(Beta.class));
@@ -41,27 +25,18 @@ class GeneratedReflectorsTest {
     }
 
     @Test
-    void shouldPreferDirectRegistryEntries() {
+    void shouldReplaceRegistryEntries() {
         AlphaReflector directReflector = new AlphaReflector();
+        AlphaReflector replacementReflector = new AlphaReflector();
         GeneratedReflectors.register(Alpha.class, directReflector);
-        GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
-            @Override
-            public <T> GeneratedReflector<T> get(Class<T> type) {
-                throw new IllegalArgumentException(type.getName());
-            }
-        });
+        GeneratedReflectors.register(Alpha.class, replacementReflector);
 
-        assertSame(directReflector, GeneratedReflectors.get(Alpha.class));
+        assertSame(replacementReflector, GeneratedReflectors.get(Alpha.class));
     }
 
     @Test
-    void shouldThrowWhenTypeIsUnknown() {
-        assertThrows(SqlExecutorException.class, () -> GeneratedReflectors.get(Alpha.class));
-    }
-
-    @SuppressWarnings("unchecked")
-    private static <T> GeneratedReflector<T> cast(GeneratedReflector<?> reflector) {
-        return (GeneratedReflector<T>) reflector;
+    void shouldReturnNullWhenTypeIsUnknown() {
+        assertNull(GeneratedReflectors.get(Alpha.class));
     }
 
     static final class Alpha {
@@ -77,18 +52,48 @@ class GeneratedReflectorsTest {
         }
 
         @Override
-        public Object invoke(Alpha target, String method, Object[] args) {
+        public ClassInfo getClassInfo() {
+            return null;
+        }
+
+        @Override
+        public Object invoke(Alpha target, int index, Object[] args) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public void set(Alpha target, String property, Object value) {
+        public void set(Alpha target, int index, Object value) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public Object get(Alpha target, String property) {
+        public Object get(Alpha target, int index) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String[] getFields() {
+            return new String[0];
+        }
+
+        @Override
+        public FieldInfo getField(int index) {
+            return null;
+        }
+
+        @Override
+        public String[] getMethods() {
+            return new String[0];
+        }
+
+        @Override
+        public int getMethod(int index) {
+            return -1;
+        }
+
+        @Override
+        public MethodInfo[] getMethod(String name) {
+            return new MethodInfo[0];
         }
     }
 
@@ -99,18 +104,48 @@ class GeneratedReflectorsTest {
         }
 
         @Override
-        public Object invoke(Beta target, String method, Object[] args) {
+        public ClassInfo getClassInfo() {
+            return null;
+        }
+
+        @Override
+        public Object invoke(Beta target, int index, Object[] args) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public void set(Beta target, String property, Object value) {
+        public void set(Beta target, int index, Object value) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public Object get(Beta target, String property) {
+        public Object get(Beta target, int index) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String[] getFields() {
+            return new  String[0];
+        }
+
+        @Override
+        public FieldInfo getField(int index) {
+            return null;
+        }
+
+        @Override
+        public String[] getMethods() {
+            return new String[0];
+        }
+
+        @Override
+        public int getMethod(int index) {
+            return -1;
+        }
+
+        @Override
+        public MethodInfo[] getMethod(String name) {
+            return new MethodInfo[0];
         }
     }
 }

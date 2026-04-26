@@ -228,24 +228,52 @@ final class AsmUtils {
     }
 
     static void emitStringEqualsDispatch(MethodVisitor mv, int stringLocal, List<String> cases, java.util.function.IntConsumer caseBody, Runnable defaultBody) {
+        if (cases.isEmpty()) {
+            defaultBody.run();
+            return;
+        }
+        java.util.Map<Integer, java.util.List<Integer>> caseIndexesByHash = new java.util.TreeMap<>();
+        for (int i = 0; i < cases.size(); i++) {
+            caseIndexesByHash.computeIfAbsent(cases.get(i).hashCode(), ignored -> new java.util.ArrayList<>()).add(i);
+        }
+        int bucketCount = caseIndexesByHash.size();
+        int[] hashes = new int[bucketCount];
+        Label[] bucketLabels = new Label[bucketCount];
+        int cursor = 0;
+        for (Integer hash : caseIndexesByHash.keySet()) {
+            hashes[cursor] = hash;
+            bucketLabels[cursor] = new Label();
+            cursor++;
+        }
         Label defaultLabel = new Label();
         Label endLabel = new Label();
-        List<Label> labels = new java.util.ArrayList<>(cases.size());
+        Label[] caseLabels = new Label[cases.size()];
         for (int i = 0; i < cases.size(); i++) {
-            labels.add(new Label());
+            caseLabels[i] = new Label();
         }
-        for (int i = 0; i < cases.size(); i++) {
-            mv.visitVarInsn(Opcodes.ALOAD, stringLocal);
-            mv.visitLdcInsn(cases.get(i));
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/String", "equals", "(Ljava/lang/Object;)Z", false);
-            mv.visitJumpInsn(Opcodes.IFNE, labels.get(i));
+
+        mv.visitVarInsn(Opcodes.ALOAD, stringLocal);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/String", "hashCode", "()I", false);
+        mv.visitLookupSwitchInsn(defaultLabel, hashes, bucketLabels);
+
+        cursor = 0;
+        for (java.util.Map.Entry<Integer, java.util.List<Integer>> entry : caseIndexesByHash.entrySet()) {
+            mv.visitLabel(bucketLabels[cursor++]);
+            for (Integer caseIndex : entry.getValue()) {
+                mv.visitVarInsn(Opcodes.ALOAD, stringLocal);
+                mv.visitLdcInsn(cases.get(caseIndex));
+                mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/String", "equals", "(Ljava/lang/Object;)Z", false);
+                mv.visitJumpInsn(Opcodes.IFNE, caseLabels[caseIndex]);
+            }
+            mv.visitJumpInsn(Opcodes.GOTO, defaultLabel);
         }
-        mv.visitJumpInsn(Opcodes.GOTO, defaultLabel);
+
         for (int i = 0; i < cases.size(); i++) {
-            mv.visitLabel(labels.get(i));
+            mv.visitLabel(caseLabels[i]);
             caseBody.accept(i);
             mv.visitJumpInsn(Opcodes.GOTO, endLabel);
         }
+
         mv.visitLabel(defaultLabel);
         defaultBody.run();
         mv.visitLabel(endLabel);
