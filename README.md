@@ -127,9 +127,9 @@ public class User {
 `@Reflect` 当前支持两档 metadata：
 
 - `ReflectMetadataLevel.BASIC`
-  生成字段访问与基础元数据
+生成字段访问与基础元数据
 - `ReflectMetadataLevel.METHOD`
-  额外生成方法相关元数据与方法调用分发
+额外生成方法相关元数据与方法调用分发
 
 例如：
 
@@ -416,13 +416,13 @@ List<User> users = Sql.selectList(
 说明：
 
 - `Sql.query()`
-  从空查询开始，适合复杂 DSL 组合
+从空查询开始，适合复杂 DSL 组合
 - `Sql.from(table)`
-  默认 `selectAll().from(table)`，适合从单表快速起查询
+默认 `selectAll().from(table)`，适合从单表快速起查询
 - `Sql.select(table, conditions...)`
-  默认单条查询语义，内部会执行 `.one(table.entityType())`
+默认单条查询语义，内部会执行 `.one(table.entityType())`
 - `Sql.selectList(table, conditions...)`
-  默认多条查询语义，内部会执行 `.list(table.entityType())`
+默认多条查询语义，内部会执行 `.list(table.entityType())`
 
 也支持直接静态 CRUD：
 
@@ -538,27 +538,26 @@ User user = Sql.from(Tables.get(User.class))
 
 #### 四框架结果
 
-| 场景 | Kora (ops/s) | MyBatis-Plus (ops/s) | jOOQ (ops/s) | Jimmer (ops/s) |
-|---|---:|---:|---:|---:|
-| `selectById` | 120,852.775 | 59,485.562 | 86,938.233 | 80,443.975 |
-| `selectByAgeRange` | 9,279.977 | 954.470 | 8,619.618 | 12,916.445 |
-| `insertOne` | 150,727.385 | 45,405.326 | 91,497.395 | 58,856.993 |
-| `updateById` | 129,969.666 | 26,389.191 | 83,238.886 | 50,276.253 |
-| `deleteById` | 127,589.454 | 27,823.167 | 73,485.918 | 90,250.492 |
-| `page` | 5,774.166 | 4,526.751 | 4,906.532 | 5,329.895 |
-| `batchInsert` | 3,806.895 | 1,240.002 | 1,819.410 | 1,389.759 |
+
+| 场景                 | Kora (ops/s) | MyBatis-Plus (ops/s) | jOOQ (ops/s) | Jimmer (ops/s) |
+| ------------------ | ------------ | -------------------- | ------------ | -------------- |
+| `selectById`       | 134,580.343  | 64,546.749           | 86,021.502   | 89,088.124     |
+| `selectByAgeRange` | 14,783.318   | 1,015.885            | 9,038.434    | 14,553.187     |
+| `insertOne`        | 148,416.712  | 48,575.187           | 86,434.914   | 66,320.762     |
+| `updateById`       | 146,268.050  | 33,746.205           | 83,948.316   | 55,267.412     |
+| `deleteById`       | 115,751.885  | 30,104.550           | 69,977.608   | 115,694.329    |
+| `page`             | 5,852.455    | 4,127.696            | 5,093.807    | 5,804.739      |
+| `batchInsert`      | 3,981.074    | 1,411.412            | 1,921.091    | 1,754.450      |
+
 
 批量写入按 `100 rows/batch` 折算吞吐：
 
-- `Kora`: `380,690 rows/s`
-- `MyBatis-Plus`: `124,000 rows/s`
-- `jOOQ`: `181,941 rows/s`
-- `Jimmer`: `138,976 rows/s`
+- `Kora`: `398,107 rows/s`
+- `MyBatis-Plus`: `141,141 rows/s`
+- `jOOQ`: `192,109 rows/s`
+- `Jimmer`: `175,445 rows/s`
 
-当前这组本地结果下：
-
-- `Kora` 在 `selectById`、`insertOne`、`updateById`、`deleteById`、`page`、`batchInsert` 上最高
-- `Jimmer` 在 `selectByAgeRange` 上最高
+当前这组本地结果下，`Kora` 在 `selectById`、`selectByAgeRange`、`insertOne`、`updateById`、`deleteById`、`page`、`batchInsert` 上最高。
 
 #### 图表
 
@@ -568,23 +567,27 @@ xychart-beta
     title "CRUD Throughput (ops/s)"
     x-axis ["selectById", "insertOne", "updateById", "deleteById"]
     y-axis "ops/s" 0 --> 160000
-    bar [120853, 150727, 129970, 127589]
-    bar [59486, 45405, 26389, 27823]
-    bar [86938, 91497, 83239, 73486]
-    bar [80444, 58857, 50276, 90250]
+    bar [134580, 148417, 146268, 115752]
+    bar [64547, 48575, 33746, 30105]
+    bar [86022, 86435, 83948, 69978]
+    bar [89088, 66321, 55267, 115694]
 ```
+
+
 
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"background":"#0f172a","primaryColor":"#2563eb","secondaryColor":"#f97316","tertiaryColor":"#22c55e","primaryTextColor":"#e5e7eb","secondaryTextColor":"#e5e7eb","tertiaryTextColor":"#e5e7eb","lineColor":"#94a3b8","textColor":"#e5e7eb","mainBkg":"#0f172a","fontFamily":"ui-sans-serif"}}}%%
 xychart-beta
     title "Range / Page / Batch Throughput (ops/s)"
     x-axis ["selectByAgeRange", "page", "batchInsert"]
-    y-axis "ops/s" 0 --> 14000
-    bar [9280, 5774, 3807]
-    bar [954, 4527, 1240]
-    bar [8620, 4907, 1819]
-    bar [12916, 5330, 1390]
+    y-axis "ops/s" 0 --> 16000
+    bar [14783, 5852, 3981]
+    bar [1016, 4128, 1411]
+    bar [9038, 5094, 1921]
+    bar [14553, 5805, 1754]
 ```
+
+
 
 图例：
 
