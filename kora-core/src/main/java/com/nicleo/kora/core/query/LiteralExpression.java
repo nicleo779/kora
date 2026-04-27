@@ -1,13 +1,11 @@
 package com.nicleo.kora.core.query;
 
-import com.nicleo.kora.core.runtime.DbType;
-
-import java.util.List;
+import com.nicleo.kora.core.runtime.dialect.RenderContext;
 
 record LiteralExpression(Object value) implements SqlExpression {
     @Override
-    public void appendTo(StringBuilder sql, List<Object> args, DbType dbType) {
-        sql.append('?');
-        args.add(value);
+    public void appendTo(RenderContext context) {
+        context.sql().append('?');
+        context.args().add(value);
     }
 }

@@ -1,8 +1,6 @@
 package com.nicleo.kora.core.query;
 
-import com.nicleo.kora.core.runtime.DbType;
-
-import java.util.List;
+import com.nicleo.kora.core.runtime.dialect.RenderContext;
 
 final class ArithmeticExpression implements SqlExpression {
     private final SqlExpression left;
@@ -16,9 +14,9 @@ final class ArithmeticExpression implements SqlExpression {
     }
 
     @Override
-    public void appendTo(StringBuilder sql, List<Object> args, DbType dbType) {
-        left.appendTo(sql, args, dbType);
-        sql.append(' ').append(operator).append(' ');
-        right.appendTo(sql, args, dbType);
+    public void appendTo(RenderContext context) {
+        left.appendTo(context);
+        context.sql().append(' ').append(operator).append(' ');
+        right.appendTo(context);
     }
 }

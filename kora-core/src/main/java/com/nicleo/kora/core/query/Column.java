@@ -1,9 +1,7 @@
 package com.nicleo.kora.core.query;
 
-import com.nicleo.kora.core.runtime.DbType;
+import com.nicleo.kora.core.runtime.dialect.RenderContext;
 import com.nicleo.kora.core.runtime.dialect.SqlDialects;
-
-import java.util.List;
 
 public final class Column<T, V> implements SqlExpression {
     private final EntityTable<T> table;
@@ -32,12 +30,14 @@ public final class Column<T, V> implements SqlExpression {
         return table.qualifier() + "." + columnName;
     }
 
-    public String expression(DbType dbType) {
-        return SqlDialects.identifiers(dbType).columnReference(table.qualifier(), columnName);
+    public String expression(RenderContext context) {
+        var dbType = context.dialect().dbType();
+        String qualifier = context == null ? table.qualifier() : context.columnQualifier(table);
+        return SqlDialects.identifiers(dbType).columnReference(qualifier, columnName);
     }
 
     @Override
-    public void appendTo(StringBuilder sql, List<Object> args, DbType dbType) {
-        sql.append(expression(dbType));
+    public void appendTo(RenderContext context) {
+        context.sql().append(expression(context));
     }
 }

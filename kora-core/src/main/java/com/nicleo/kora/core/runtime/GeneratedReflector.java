@@ -1,54 +1,91 @@
 package com.nicleo.kora.core.runtime;
 
 public interface GeneratedReflector<T> {
+
     T newInstance();
 
     default T newInstance(Object[] args) {
         throw new UnsupportedOperationException("Type does not support constructor instantiation");
     }
 
-    default ClassInfo getClassInfo() {
-        return null;
+    ClassInfo getClassInfo();
+
+    Object invoke(T target, int index, Object[] args);
+
+    default Object invoke(T target, String method, Object[] args) {
+        int index = methodIndex(method);
+        if (index < 0) {
+            throw new IllegalArgumentException("Unknown method");
+        }
+        return invoke(target, index, args);
     }
 
-    Object invoke(T target, String method, Object[] args);
+    void set(T target, int index, Object value);
 
-    void set(T target, String property, Object value);
-
-    Object get(T target, String property);
-
-    default String[] fieldNamesView() {
-        return getFields();
+    default void set(T target, String property, Object value) {
+        int index = fieldIndex(property);
+        if (index < 0) {
+            throw new IllegalArgumentException("Unknown property: " + property);
+        }
+        set(target, index, value);
     }
 
-    default String[] getFields() {
-        String[] names = fieldNamesView();
-        return names.length == 0 ? names : names.clone();
+    Object get(T target, int index);
+
+    default Object get(T target, String property) {
+        int index = fieldIndex(property);
+        if (index < 0) {
+            throw new IllegalArgumentException("Unknown property: " + property);
+        }
+        return get(target, index);
     }
+
+    String[] getFields();
 
     default boolean hasField(String field) {
-        if (field == null) {
-            return false;
-        }
-        return getField(field) != null;
+        return fieldIndex(field) >= 0;
     }
+
+    FieldInfo getField(int index);
 
     default FieldInfo getField(String field) {
-        return null;
+        int index = fieldIndex(field);
+        return index < 0 ? null : getField(index);
     }
 
-    default String[] getMethods() {
-        return new String[0];
-    }
+    String[] getMethods();
 
     default boolean hasMethod(String name) {
-        if (name == null) {
-            return false;
-        }
-        return getMethod(name).length > 0;
+        return methodIndex(name) >= 0;
     }
 
-    default MethodInfo[] getMethod(String name) {
-        return new MethodInfo[0];
+    int getMethod(int index);
+
+    MethodInfo[] getMethod(String name);
+
+    default int fieldIndex(String property) {
+        if (property == null) {
+            return -1;
+        }
+        String[] fields = getFields();
+        for (int i = 0; i < fields.length; i++) {
+            if (property.equals(fields[i])) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    default int methodIndex(String method) {
+        if (method == null) {
+            return -1;
+        }
+        String[] methods = getMethods();
+        for (int i = 0; i < methods.length; i++) {
+            if (method.equals(methods[i])) {
+                return i;
+            }
+        }
+        return -1;
     }
 }

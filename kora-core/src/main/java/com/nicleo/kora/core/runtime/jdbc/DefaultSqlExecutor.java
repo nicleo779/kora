@@ -19,21 +19,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
-import java.math.BigDecimal;
-import java.math.BigInteger;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.time.OffsetDateTime;
-import java.time.OffsetTime;
-import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -337,18 +328,9 @@ public class DefaultSqlExecutor implements SqlExecutor {
         if (Map.class.isAssignableFrom(resultType)) {
             return resultSet -> resultType.cast(readRowAsMap(resultSet));
         }
-        if (isSimpleResultType(resultType)) {
-            return resultSet -> {
-                Object converted = typeConverter.cast(resultSet, 1, resultType);
-                if (converted == null) {
-                    return null;
-                }
-                @SuppressWarnings("unchecked")
-                T value = (T) converted;
-                return value;
-            };
-        }
         GeneratedReflector<T> reflector = GeneratedReflectors.get(resultType);
+        if(reflector == null)
+            return resultSet -> typeConverter.cast(resultSet, 1, resultType);
         return new GeneratedRowMapper<>(resultType, reflector, typeConverter);
     }
 
@@ -359,44 +341,6 @@ public class DefaultSqlExecutor implements SqlExecutor {
             row.put(metaData.getColumnLabel(columnIndex), resultSet.getObject(columnIndex));
         }
         return row;
-    }
-
-    private boolean isSimpleResultType(Class<?> resultType) {
-        Class<?> normalized = wrap(resultType);
-        return normalized.isPrimitive()
-                || normalized == String.class
-                || normalized == Boolean.class
-                || normalized == Character.class
-                || Number.class.isAssignableFrom(normalized)
-                || normalized == BigDecimal.class
-                || normalized == BigInteger.class
-                || normalized == LocalDate.class
-                || normalized == LocalDateTime.class
-                || normalized == LocalTime.class
-                || normalized == Instant.class
-                || normalized == OffsetDateTime.class
-                || normalized == OffsetTime.class
-                || normalized == ZonedDateTime.class
-                || normalized == Object.class
-                || normalized.isEnum()
-                || normalized == byte[].class;
-    }
-
-    private Class<?> wrap(Class<?> type) {
-        if (!type.isPrimitive()) {
-            return type;
-        }
-        return switch (type.getName()) {
-            case "boolean" -> Boolean.class;
-            case "byte" -> Byte.class;
-            case "short" -> Short.class;
-            case "int" -> Integer.class;
-            case "long" -> Long.class;
-            case "float" -> Float.class;
-            case "double" -> Double.class;
-            case "char" -> Character.class;
-            default -> type;
-        };
     }
 
     private SqlRequest applyInterceptors(SqlExecutionContext context, SqlRequest originalRequest) {

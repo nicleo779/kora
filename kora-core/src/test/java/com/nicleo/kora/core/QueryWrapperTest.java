@@ -38,7 +38,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT `users`.* FROM `users` WHERE `users`.`id` = ? AND `users`.`name` IS NOT NULL AND `users`.`id` IN (?, ?, ?) AND `users`.`age` BETWEEN ? AND ?",
+                "SELECT * FROM users WHERE id = ? AND name IS NOT NULL AND id IN (?, ?, ?) AND age BETWEEN ? AND ?",
                 request.getSql());
         assertArrayEquals(new Object[]{1L, 1L, 2L, 3L, 18, 30}, request.getArgs());
     }
@@ -54,7 +54,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT `users`.* FROM `users` WHERE `users`.`id` = ?",
+                "SELECT * FROM users WHERE id = ?",
                 request.getSql());
         assertArrayEquals(new Object[]{1L}, request.getArgs());
     }
@@ -74,7 +74,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT `users`.* FROM `users` WHERE (`users`.`id` = ? AND `users`.`age` >= ? AND `users`.`name` IS NOT NULL)",
+                "SELECT * FROM users WHERE (id = ? AND age >= ? AND name IS NOT NULL)",
                 request.getSql());
         assertArrayEquals(new Object[]{1L, 18}, request.getArgs());
     }
@@ -91,7 +91,7 @@ class QueryWrapperTest {
                         .notIn(users.AGE, List.of()))
                 .toDefinition(), DbType.MYSQL);
 
-        assertEquals("SELECT `users`.* FROM `users` WHERE 1 = 0 AND 1 = 1", request.getSql());
+        assertEquals("SELECT * FROM users WHERE 1 = 0 AND 1 = 1", request.getSql());
         assertArrayEquals(new Object[0], request.getArgs());
     }
 
@@ -109,7 +109,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT COUNT(*) AS `total`, AVG(`users`.`age`) AS `avg_age`, MAX(`users`.`age`) AS `max_age`, MIN(`users`.`age`) AS `min_age` FROM `users`",
+                "SELECT COUNT(*) AS total, AVG(age) AS avg_age, MAX(age) AS max_age, MIN(age) AS min_age FROM users",
                 request.getSql());
         assertArrayEquals(new Object[0], request.getArgs());
     }
@@ -124,7 +124,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT IF(`users`.`age` >= ?, ?, ?) AS `age_group` FROM `users`",
+                "SELECT IF(age >= ?, ?, ?) AS age_group FROM users",
                 mysqlRequest.getSql());
         assertArrayEquals(new Object[]{18, "adult", "minor"}, mysqlRequest.getArgs());
 
@@ -134,7 +134,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.POSTGRESQL);
 
         assertEquals(
-                "SELECT CASE WHEN \"users\".\"age\" >= ? THEN ? ELSE ? END AS \"age_group\" FROM \"users\"",
+                "SELECT CASE WHEN age >= ? THEN ? ELSE ? END AS age_group FROM users",
                 postgresqlRequest.getSql());
         assertArrayEquals(new Object[]{18, "adult", "minor"}, postgresqlRequest.getArgs());
     }
@@ -154,7 +154,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT IF(IF(`users`.`age` >= ?, ?, ?) = ?, ?, ?) AS `adult_flag` FROM `users`",
+                "SELECT IF(IF(age >= ?, ?, ?) = ?, ?, ?) AS adult_flag FROM users",
                 request.getSql());
         assertArrayEquals(new Object[]{18, "adult", "minor", "adult", 1, 0}, request.getArgs());
     }
@@ -174,7 +174,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT IF(`users`.`age` >= ?, ?, ?) AS `age_group`, COUNT(*) AS `total` FROM `users` GROUP BY IF(`users`.`age` >= ?, ?, ?) HAVING COUNT(*) >= ? ORDER BY COUNT(*) DESC",
+                "SELECT IF(age >= ?, ?, ?) AS age_group, COUNT(*) AS total FROM users GROUP BY IF(age >= ?, ?, ?) HAVING COUNT(*) >= ? ORDER BY COUNT(*) DESC",
                 request.getSql());
         assertArrayEquals(new Object[]{18, "adult", "minor", 18, "adult", "minor", 2}, request.getArgs());
     }
@@ -192,7 +192,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT COUNT(*) AS `total`, MAX(`users`.`age`) AS `max_age` FROM `users` ORDER BY `total` DESC, `max_age` ASC",
+                "SELECT COUNT(*) AS total, MAX(age) AS max_age FROM users ORDER BY total DESC, max_age ASC",
                 mysqlRequest.getSql());
         assertArrayEquals(new Object[0], mysqlRequest.getArgs());
 
@@ -205,7 +205,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.POSTGRESQL);
 
         assertEquals(
-                "SELECT COUNT(*) AS \"total\", MAX(\"users\".\"age\") AS \"max_age\" FROM \"users\" ORDER BY \"total\" DESC, \"max_age\" ASC",
+                "SELECT COUNT(*) AS total, MAX(age) AS max_age FROM users ORDER BY total DESC, max_age ASC",
                 postgresqlRequest.getSql());
         assertArrayEquals(new Object[0], postgresqlRequest.getArgs());
     }
@@ -222,7 +222,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT COUNT(*) AS `total` FROM `users` ORDER BY `total` DESC",
+                "SELECT COUNT(*) AS total FROM users ORDER BY total DESC",
                 request.getSql());
         assertArrayEquals(new Object[0], request.getArgs());
     }
@@ -239,7 +239,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT IF(`users`.`age` >= ?, ?, ?) AS `age_group`, COUNT(*) AS `total` FROM `users` GROUP BY `age_group`",
+                "SELECT IF(age >= ?, ?, ?) AS age_group, COUNT(*) AS total FROM users GROUP BY age_group",
                 mysqlRequest.getSql());
         assertArrayEquals(new Object[]{18, "adult", "minor"}, mysqlRequest.getArgs());
 
@@ -250,7 +250,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.POSTGRESQL);
 
         assertEquals(
-                "SELECT CASE WHEN \"users\".\"age\" >= ? THEN ? ELSE ? END AS \"age_group\", COUNT(*) AS \"total\" FROM \"users\" GROUP BY \"age_group\"",
+                "SELECT CASE WHEN age >= ? THEN ? ELSE ? END AS age_group, COUNT(*) AS total FROM users GROUP BY age_group",
                 postgresqlRequest.getSql());
         assertArrayEquals(new Object[]{18, "adult", "minor"}, postgresqlRequest.getArgs());
     }
@@ -267,7 +267,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT COUNT(*) AS `total` FROM `users` HAVING `total` >= ?",
+                "SELECT COUNT(*) AS total FROM users HAVING total >= ?",
                 mysqlRequest.getSql());
         assertArrayEquals(new Object[]{2}, mysqlRequest.getArgs());
 
@@ -278,7 +278,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.POSTGRESQL);
 
         assertEquals(
-                "SELECT COUNT(*) AS \"total\" FROM \"users\" HAVING \"total\" >= ?",
+                "SELECT COUNT(*) AS total FROM users HAVING total >= ?",
                 postgresqlRequest.getSql());
         assertArrayEquals(new Object[]{2}, postgresqlRequest.getArgs());
     }
@@ -295,7 +295,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT COUNT(*) AS `total` FROM `users` HAVING `total` >= ?",
+                "SELECT COUNT(*) AS total FROM users HAVING total >= ?",
                 request.getSql());
         assertArrayEquals(new Object[]{2}, request.getArgs());
     }
@@ -313,7 +313,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT COUNT(*) AS `total`, MAX(`users`.`age`) AS `max_age` FROM `users` HAVING (`total` >= ? AND `max_age` >= ?)",
+                "SELECT COUNT(*) AS total, MAX(age) AS max_age FROM users HAVING (total >= ? AND max_age >= ?)",
                 request.getSql());
         assertArrayEquals(new Object[]{2, 18}, request.getArgs());
     }
@@ -331,7 +331,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT COUNT(*) AS `total` FROM `users` HAVING `total` >= ? ORDER BY `total` ASC",
+                "SELECT COUNT(*) AS total FROM users HAVING total >= ? ORDER BY total ASC",
                 request.getSql());
         assertArrayEquals(new Object[]{2}, request.getArgs());
     }
@@ -348,7 +348,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "select count(*) from (SELECT `users`.* FROM `users` WHERE `users`.`age` >= ? ORDER BY `users`.`id` ASC) _kora_count",
+                "select count(*) from (SELECT * FROM users WHERE age >= ? ORDER BY id ASC) _kora_count",
                 request.getSql());
         assertArrayEquals(new Object[]{18}, request.getArgs());
     }
@@ -370,7 +370,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT `users`.* FROM `users` WHERE `users`.`id` = ? OR (`users`.`name` = ? AND (`users`.`age` >= ? AND `users`.`age` < ?))",
+                "SELECT * FROM users WHERE id = ? OR (name = ? AND (age >= ? AND age < ?))",
                 request.getSql());
         assertArrayEquals(new Object[]{1L, "Bob", 18, 30}, request.getArgs());
     }
@@ -392,7 +392,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT `users`.* FROM `users` LEFT JOIN `users` `u2` ON `users`.`id` = `u2`.`id` OR (`u2`.`name` = ? AND `u2`.`age` = ?)",
+                "SELECT users.* FROM users LEFT JOIN users u2 ON users.id = u2.id OR (u2.name = ? AND u2.age = ?)",
                 request.getSql());
         assertArrayEquals(new Object[]{"Bob", 30}, request.getArgs());
     }
@@ -409,7 +409,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT `users`.* FROM `users` LEFT JOIN `users` `u2` ON `users`.`id` = `u2`.`id`",
+                "SELECT users.* FROM users LEFT JOIN users u2 ON users.id = u2.id",
                 request.getSql());
         assertArrayEquals(new Object[0], request.getArgs());
     }
@@ -426,9 +426,25 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT `users`.`name`, `manager`.`name` FROM `users` LEFT JOIN `users` `manager` ON `users`.`id` = `manager`.`id`",
+                "SELECT users.name, manager.name FROM users LEFT JOIN users manager ON users.id = manager.id",
                 request.getSql());
         assertArrayEquals(new Object[0], request.getArgs());
+    }
+
+    @Test
+    void selectAllShouldUseAliasWhenSingleTableAliasIsExplicit() {
+        TestUserTable alias = TestUserTable.USERS.alias("u");
+
+        SqlRequest request = sqlGenerator.renderQuery(Wrapper.query()
+                .selectAll()
+                .from(alias)
+                .where(alias.ID.eq(1L))
+                .toDefinition(), DbType.MYSQL);
+
+        assertEquals(
+                "SELECT u.* FROM users u WHERE u.id = ?",
+                request.getSql());
+        assertArrayEquals(new Object[]{1L}, request.getArgs());
     }
 
     @Test
@@ -446,7 +462,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT `users`.* FROM `users` WHERE `users`.`id` = ? AND (NOT (`users`.`name` = ? OR (`users`.`age` < ?)))",
+                "SELECT * FROM users WHERE id = ? AND (NOT (name = ? OR (age < ?)))",
                 request.getSql());
         assertArrayEquals(new Object[]{1L, "Bob", 18}, request.getArgs());
     }
@@ -467,7 +483,7 @@ class QueryWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "SELECT `users`.* FROM `users` INNER JOIN `users` `u2` ON `users`.`id` = `u2`.`id` RIGHT JOIN `users` `u3` ON `users`.`id` = `u3`.`id`",
+                "SELECT users.* FROM users INNER JOIN users u2 ON users.id = u2.id RIGHT JOIN users u3 ON users.id = u3.id",
                 request.getSql());
         assertArrayEquals(new Object[0], request.getArgs());
     }

@@ -61,6 +61,7 @@ final class ReflectorClassGenerator {
         List<String> expandedFieldNames = context.expandedFieldNames(entityType);
         List<ExecutableElement> methods = includeMethodsMetadata ? context.collectInvokableMethods(entityType) : List.of();
         Map<String, List<ExecutableElement>> methodsByName = groupMethodsByName(methods);
+        List<String> expandedMethodNames = includeMethodsMetadata ? expandedMethodNames(entityType) : List.of();
         TypeElement parentReflectType = resolveParentReflectType(entityType);
         String parentReflectTypeName = parentReflectType == null ? null : parentReflectType.getQualifiedName().toString();
         ExecutableElement preferredConstructor = findPreferredConstructor(entityType);
@@ -85,28 +86,26 @@ final class ReflectorClassGenerator {
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_VOLATILE, "parentReflector", GENERATED_REFLECTOR_DESC, null, null).visitEnd();
         }
 
-        writeClinit(cw, classInternalName, includeFieldsMetadata ? expandedFieldNames : List.of(), includeMethodsMetadata ? new ArrayList<>(methodsByName.keySet()) : List.of());
+        writeClinit(cw, classInternalName, includeFieldsMetadata ? expandedFieldNames : List.of(), expandedMethodNames);
         writeNoArgConstructor(cw);
         if (parentReflectTypeName != null) {
             writeParentReflectorAccessor(cw, classInternalName, parentReflectTypeName);
         }
         if (includeMethodsMetadata && parentReflectTypeName != null) {
-            writeMergeMethodNames(cw);
             writeMergeMethodInfos(cw);
         }
         writeNewInstance(cw, entityType, entityInternalName, preferredConstructor, hasImplicitDefaultConstructor);
         writeNewInstanceWithArgs(cw, entityType, entityInternalName, classInternalName, fullArgsConstructor, hasImplicitDefaultConstructor);
         writeGetClassInfo(cw, classInternalName, entityType, includeAnnotationMetadata, fullArgsConstructor);
-        writeInvoke(cw, classInternalName, entityType, entityInternalName, methods, parentReflectTypeName);
-        writeSet(cw, classInternalName, entityType, entityInternalName, fields, parentReflectTypeName);
-        writeGet(cw, classInternalName, entityType, entityInternalName, fields, parentReflectTypeName);
-        writeFieldNamesView(cw, classInternalName, includeFieldsMetadata, parentReflectTypeName);
+        writeInvoke(cw, classInternalName, entityType, entityInternalName, methodsByName, expandedMethodNames, parentReflectTypeName);
+        writeSetByIndex(cw, classInternalName, entityType, entityInternalName, fields, expandedFieldNames, parentReflectTypeName);
+        writeGet(cw, classInternalName, entityType, entityInternalName, fields, expandedFieldNames, parentReflectTypeName);
         writeGetFields(cw, classInternalName, includeFieldsMetadata, parentReflectTypeName);
-        writeHasField(cw, classInternalName, expandedFieldNames, includeFieldsMetadata, parentReflectTypeName);
+        writeFieldIndex(cw, classInternalName, expandedFieldNames, includeFieldsMetadata, parentReflectTypeName);
         writeGetField(cw, classInternalName, entityType, fields, expandedFieldNames, includeFieldsMetadata, includeAnnotationMetadata, parentReflectTypeName);
-        writeGetMethods(cw, classInternalName, includeMethodsMetadata, new ArrayList<>(methodsByName.keySet()), parentReflectTypeName);
-        writeHasMethod(cw, classInternalName, new ArrayList<>(methodsByName.keySet()), includeMethodsMetadata, parentReflectTypeName);
-        writeGetMethod(cw, classInternalName, methodsByName, includeMethodsMetadata, includeAnnotationMetadata, parentReflectTypeName);
+        writeGetMethods(cw, classInternalName, includeMethodsMetadata, expandedMethodNames, parentReflectTypeName);
+        writeMethodIndex(cw, classInternalName, expandedMethodNames, includeMethodsMetadata, parentReflectTypeName);
+        writeGetMethod(cw, classInternalName, methodsByName, expandedMethodNames, includeMethodsMetadata, includeAnnotationMetadata, parentReflectTypeName);
 
         cw.visitEnd();
         return cw.toByteArray();
@@ -368,24 +367,56 @@ final class ReflectorClassGenerator {
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, CLASS_INFO, "<init>", "(Ljava/lang/Class;Ljava/lang/reflect/Type;I[" + ANNOTATION_META_DESC + "[" + PARAMETER_INFO_DESC + ")V", false);
     }
 
-    private void writeInvoke(ClassWriter cw, String classInternalName, TypeElement entityType, String entityInternalName, List<ExecutableElement> methods, String parentReflectTypeName) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "invoke", "(Ljava/lang/Object;Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/Object;", null, null);
+    private void writeInvoke(ClassWriter cw,
+                             String classInternalName,
+                             TypeElement entityType,
+                             String entityInternalName,
+                             Map<String, List<ExecutableElement>> methodsByName,
+                             List<String> expandedMethodNames,
+                             String parentReflectTypeName) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "invoke", "(Ljava/lang/Object;I[Ljava/lang/Object;)Ljava/lang/Object;", null, null);
         mv.visitCode();
-        Label methodNotNull = new Label();
-        mv.visitVarInsn(Opcodes.ALOAD, 2);
-        mv.visitJumpInsn(Opcodes.IFNONNULL, methodNotNull);
-        emitIllegalArgument(mv, "method must not be null");
-        mv.visitLabel(methodNotNull);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitTypeInsn(Opcodes.CHECKCAST, entityInternalName);
         mv.visitVarInsn(Opcodes.ASTORE, 4);
-        AsmUtils.emitStringEqualsDispatch(
-                mv,
-                2,
-                methods.stream().map(method -> method.getSimpleName().toString()).toList(),
-                index -> emitInvokeCase(mv, methods.get(index), entityInternalName),
-                () -> emitInvokeDefault(mv, classInternalName, parentReflectTypeName)
-        );
+        if (expandedMethodNames.isEmpty()) {
+            emitIllegalArgument(mv, "Unknown method index");
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+            return;
+        }
+        Label defaultLabel = new Label();
+        Label[] caseLabels = new Label[expandedMethodNames.size()];
+        for (int i = 0; i < expandedMethodNames.size(); i++) {
+            caseLabels[i] = new Label();
+        }
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitTableSwitchInsn(0, expandedMethodNames.size() - 1, defaultLabel, caseLabels);
+        for (int i = 0; i < expandedMethodNames.size(); i++) {
+            String methodName = expandedMethodNames.get(i);
+            mv.visitLabel(caseLabels[i]);
+            List<ExecutableElement> localMethods = methodsByName.get(methodName);
+            if (localMethods != null && !localMethods.isEmpty()) {
+                emitInvokeCase(mv, localMethods.get(0), entityInternalName);
+            } else if (parentReflectTypeName != null) {
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
+                mv.visitVarInsn(Opcodes.ASTORE, 5);
+                mv.visitVarInsn(Opcodes.ALOAD, 5);
+                mv.visitLdcInsn(methodName);
+                mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "methodIndex", "(Ljava/lang/String;)I", true);
+                mv.visitVarInsn(Opcodes.ISTORE, 6);
+                mv.visitVarInsn(Opcodes.ALOAD, 5);
+                mv.visitVarInsn(Opcodes.ALOAD, 4);
+                mv.visitVarInsn(Opcodes.ILOAD, 6);
+                mv.visitVarInsn(Opcodes.ALOAD, 3);
+                mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "invoke", "(Ljava/lang/Object;I[Ljava/lang/Object;)Ljava/lang/Object;", true);
+                mv.visitInsn(Opcodes.ARETURN);
+            } else {
+                emitIllegalArgument(mv, "Unknown method index");
+            }
+        }
+        mv.visitLabel(defaultLabel);
+        emitIllegalArgument(mv, "Unknown method index");
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
@@ -408,38 +439,117 @@ final class ReflectorClassGenerator {
         mv.visitEnd();
     }
 
-    private void writeGet(ClassWriter cw, String classInternalName, TypeElement entityType, String entityInternalName, List<VariableElement> fields, String parentReflectTypeName) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "get", "(Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/Object;", null, null);
+    private void writeSetByIndex(ClassWriter cw,
+                                 String classInternalName,
+                                 TypeElement entityType,
+                                 String entityInternalName,
+                                 List<VariableElement> fields,
+                                 List<String> expandedFieldNames,
+                                 String parentReflectTypeName) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "set", "(Ljava/lang/Object;ILjava/lang/Object;)V", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitTypeInsn(Opcodes.CHECKCAST, entityInternalName);
-        mv.visitVarInsn(Opcodes.ASTORE, 3);
-        AsmUtils.emitStringEqualsDispatch(
-                mv,
-                2,
-                fields.stream().map(field -> field.getSimpleName().toString()).toList(),
-                index -> emitGetCase(mv, entityType, entityInternalName, fields.get(index)),
-                () -> emitGetDefault(mv, classInternalName, parentReflectTypeName)
-        );
+        mv.visitVarInsn(Opcodes.ASTORE, 4);
+        if (expandedFieldNames.isEmpty()) {
+            emitIllegalArgument(mv, "Unknown property index");
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+            return;
+        }
+        Map<String, VariableElement> localFields = new LinkedHashMap<>();
+        for (VariableElement field : fields) {
+            localFields.put(field.getSimpleName().toString(), field);
+        }
+        Label defaultLabel = new Label();
+        Label[] caseLabels = new Label[expandedFieldNames.size()];
+        for (int i = 0; i < expandedFieldNames.size(); i++) {
+            caseLabels[i] = new Label();
+        }
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitTableSwitchInsn(0, expandedFieldNames.size() - 1, defaultLabel, caseLabels);
+        for (int i = 0; i < expandedFieldNames.size(); i++) {
+            mv.visitLabel(caseLabels[i]);
+            String fieldName = expandedFieldNames.get(i);
+            VariableElement field = localFields.get(fieldName);
+            if (field != null) {
+                emitSetCase(mv, entityType, entityInternalName, field);
+            } else if (parentReflectTypeName != null) {
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
+                mv.visitVarInsn(Opcodes.ASTORE, 5);
+                mv.visitVarInsn(Opcodes.ALOAD, 5);
+                mv.visitLdcInsn(fieldName);
+                mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "fieldIndex", "(Ljava/lang/String;)I", true);
+                mv.visitVarInsn(Opcodes.ISTORE, 6);
+                mv.visitVarInsn(Opcodes.ALOAD, 5);
+                mv.visitVarInsn(Opcodes.ALOAD, 4);
+                mv.visitVarInsn(Opcodes.ILOAD, 6);
+                mv.visitVarInsn(Opcodes.ALOAD, 3);
+                mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "set", "(Ljava/lang/Object;ILjava/lang/Object;)V", true);
+                mv.visitInsn(Opcodes.RETURN);
+            } else {
+                emitIllegalArgument(mv, "Unknown property index");
+            }
+        }
+        mv.visitLabel(defaultLabel);
+        emitIllegalArgument(mv, "Unknown property index");
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
 
-    private void writeFieldNamesView(ClassWriter cw, String classInternalName, boolean includeFieldsMetadata, String parentReflectTypeName) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "fieldNamesView", "()[Ljava/lang/String;", null, null);
+    private void writeGet(ClassWriter cw,
+                          String classInternalName,
+                          TypeElement entityType,
+                          String entityInternalName,
+                          List<VariableElement> fields,
+                          List<String> expandedFieldNames,
+                          String parentReflectTypeName) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "get", "(Ljava/lang/Object;I)Ljava/lang/Object;", null, null);
         mv.visitCode();
-        if (includeFieldsMetadata) {
-            mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, "FIELD_NAMES", "[Ljava/lang/String;");
-            mv.visitInsn(Opcodes.ARETURN);
-        } else if (parentReflectTypeName != null) {
-            mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
-            mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "fieldNamesView", "()[Ljava/lang/String;", true);
-            mv.visitInsn(Opcodes.ARETURN);
-        } else {
-            AsmUtils.pushInt(mv, 0);
-            mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/String");
-            mv.visitInsn(Opcodes.ARETURN);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, entityInternalName);
+        mv.visitVarInsn(Opcodes.ASTORE, 3);
+        if (expandedFieldNames.isEmpty()) {
+            emitIllegalArgument(mv, "Unknown property index");
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+            return;
         }
+        Map<String, VariableElement> localFields = new LinkedHashMap<>();
+        for (VariableElement field : fields) {
+            localFields.put(field.getSimpleName().toString(), field);
+        }
+        Label defaultLabel = new Label();
+        Label[] caseLabels = new Label[expandedFieldNames.size()];
+        for (int i = 0; i < expandedFieldNames.size(); i++) {
+            caseLabels[i] = new Label();
+        }
+        mv.visitVarInsn(Opcodes.ILOAD, 2);
+        mv.visitTableSwitchInsn(0, expandedFieldNames.size() - 1, defaultLabel, caseLabels);
+        for (int i = 0; i < expandedFieldNames.size(); i++) {
+            String fieldName = expandedFieldNames.get(i);
+            mv.visitLabel(caseLabels[i]);
+            VariableElement field = localFields.get(fieldName);
+            if (field != null) {
+                emitGetCase(mv, entityType, entityInternalName, field);
+            } else if (parentReflectTypeName != null) {
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
+                mv.visitVarInsn(Opcodes.ASTORE, 4);
+                mv.visitVarInsn(Opcodes.ALOAD, 4);
+                mv.visitLdcInsn(fieldName);
+                mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "fieldIndex", "(Ljava/lang/String;)I", true);
+                mv.visitVarInsn(Opcodes.ISTORE, 5);
+                mv.visitVarInsn(Opcodes.ALOAD, 4);
+                mv.visitVarInsn(Opcodes.ALOAD, 3);
+                mv.visitVarInsn(Opcodes.ILOAD, 5);
+                mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "get", "(Ljava/lang/Object;I)Ljava/lang/Object;", true);
+                mv.visitInsn(Opcodes.ARETURN);
+            } else {
+                emitIllegalArgument(mv, "Unknown property index");
+            }
+        }
+        mv.visitLabel(defaultLabel);
+        emitIllegalArgument(mv, "Unknown property index");
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
@@ -449,27 +559,24 @@ final class ReflectorClassGenerator {
         mv.visitCode();
         if (includeFieldsMetadata) {
             mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, "FIELD_NAMES", "[Ljava/lang/String;");
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "[Ljava/lang/String;", "clone", "()Ljava/lang/Object;", false);
-            mv.visitTypeInsn(Opcodes.CHECKCAST, "[Ljava/lang/String;");
             mv.visitInsn(Opcodes.ARETURN);
         } else if (parentReflectTypeName != null) {
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
             mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "getFields", "()[Ljava/lang/String;", true);
             mv.visitInsn(Opcodes.ARETURN);
         } else {
-            AsmUtils.pushInt(mv, 0);
-            mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/String");
+            mv.visitFieldInsn(Opcodes.GETSTATIC, GENERATED_REFLECTOR, "NO_FIELDS", "[Ljava/lang/String;");
             mv.visitInsn(Opcodes.ARETURN);
         }
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
 
-    private void writeHasField(ClassWriter cw, String classInternalName, List<String> expandedFieldNames, boolean includeFieldsMetadata, String parentReflectTypeName) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "hasField", "(Ljava/lang/String;)Z", null, null);
+    private void writeFieldIndex(ClassWriter cw, String classInternalName, List<String> expandedFieldNames, boolean includeFieldsMetadata, String parentReflectTypeName) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "fieldIndex", "(Ljava/lang/String;)I", null, null);
         mv.visitCode();
         if (!includeFieldsMetadata) {
-            emitParentBooleanOrFalse(mv, classInternalName, parentReflectTypeName, "hasField", "(Ljava/lang/String;)Z");
+            emitParentIntOrMinusOne(mv, classInternalName, parentReflectTypeName, "fieldIndex", "(Ljava/lang/String;)I");
             mv.visitMaxs(0, 0);
             mv.visitEnd();
             return;
@@ -477,7 +584,7 @@ final class ReflectorClassGenerator {
         Label nonNull = new Label();
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitJumpInsn(Opcodes.IFNONNULL, nonNull);
-        mv.visitInsn(Opcodes.ICONST_0);
+        AsmUtils.pushInt(mv, -1);
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitLabel(nonNull);
         AsmUtils.emitStringEqualsDispatch(
@@ -485,20 +592,20 @@ final class ReflectorClassGenerator {
                 1,
                 expandedFieldNames,
                 index -> {
-                    mv.visitInsn(Opcodes.ICONST_1);
+                    AsmUtils.pushInt(mv, index);
                     mv.visitInsn(Opcodes.IRETURN);
                 },
-                () -> emitParentBooleanDefault(mv, classInternalName, parentReflectTypeName, "hasField", "(Ljava/lang/String;)Z", 1)
+                () -> emitParentIntDefault(mv, classInternalName, parentReflectTypeName, "fieldIndex", "(Ljava/lang/String;)I", 1)
         );
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
 
     private void writeGetField(ClassWriter cw, String classInternalName, TypeElement entityType, List<VariableElement> fields, List<String> expandedFieldNames, boolean includeFieldsMetadata, boolean includeAnnotationMetadata, String parentReflectTypeName) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "getField", "(Ljava/lang/String;)" + FIELD_INFO_DESC, null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "getField", "(I)" + FIELD_INFO_DESC, null, null);
         mv.visitCode();
         if (!includeFieldsMetadata) {
-            emitParentObjectOrNull(mv, classInternalName, parentReflectTypeName, "getField", "(Ljava/lang/String;)" + FIELD_INFO_DESC);
+            emitParentObjectOrNullByIndex(mv, classInternalName, parentReflectTypeName, "getField", "(I)" + FIELD_INFO_DESC);
             mv.visitMaxs(0, 0);
             mv.visitEnd();
             return;
@@ -507,46 +614,52 @@ final class ReflectorClassGenerator {
         for (VariableElement field : fields) {
             localFields.put(field.getSimpleName().toString(), field);
         }
-        Label nonNull = new Label();
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitJumpInsn(Opcodes.IFNONNULL, nonNull);
+        if (expandedFieldNames.isEmpty()) {
+            mv.visitInsn(Opcodes.ACONST_NULL);
+            mv.visitInsn(Opcodes.ARETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+            return;
+        }
+        Label defaultLabel = new Label();
+        Label[] caseLabels = new Label[expandedFieldNames.size()];
+        for (int i = 0; i < expandedFieldNames.size(); i++) {
+            caseLabels[i] = new Label();
+        }
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        mv.visitTableSwitchInsn(0, expandedFieldNames.size() - 1, defaultLabel, caseLabels);
+        for (int i = 0; i < expandedFieldNames.size(); i++) {
+            String fieldName = expandedFieldNames.get(i);
+            mv.visitLabel(caseLabels[i]);
+            VariableElement field = localFields.get(fieldName);
+            if (field != null) {
+                emitFieldInfo(mv, field, includeAnnotationMetadata, classInternalName);
+                mv.visitInsn(Opcodes.ARETURN);
+            } else {
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
+                mv.visitVarInsn(Opcodes.ASTORE, 2);
+                mv.visitVarInsn(Opcodes.ALOAD, 2);
+                mv.visitLdcInsn(fieldName);
+                mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "fieldIndex", "(Ljava/lang/String;)I", true);
+                mv.visitVarInsn(Opcodes.ISTORE, 3);
+                mv.visitVarInsn(Opcodes.ALOAD, 2);
+                mv.visitVarInsn(Opcodes.ILOAD, 3);
+                mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "getField", "(I)" + FIELD_INFO_DESC, true);
+                mv.visitInsn(Opcodes.ARETURN);
+            }
+        }
+        mv.visitLabel(defaultLabel);
         mv.visitInsn(Opcodes.ACONST_NULL);
         mv.visitInsn(Opcodes.ARETURN);
-        mv.visitLabel(nonNull);
-        AsmUtils.emitStringEqualsDispatch(
-                mv,
-                1,
-                expandedFieldNames,
-                index -> {
-                    String fieldName = expandedFieldNames.get(index);
-                    VariableElement field = localFields.get(fieldName);
-                    if (field != null) {
-                        emitFieldInfo(mv, field, includeAnnotationMetadata, classInternalName);
-                        mv.visitInsn(Opcodes.ARETURN);
-                    } else {
-                        emitParentFieldLookup(mv, classInternalName, fieldName);
-                    }
-                },
-                () -> {
-                    if (parentReflectTypeName != null) {
-                        mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
-                        mv.visitVarInsn(Opcodes.ALOAD, 1);
-                        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "getField", "(Ljava/lang/String;)" + FIELD_INFO_DESC, true);
-                        mv.visitInsn(Opcodes.ARETURN);
-                    } else {
-                        mv.visitInsn(Opcodes.ACONST_NULL);
-                        mv.visitInsn(Opcodes.ARETURN);
-                    }
-                }
-        );
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
 
-    private void emitParentFieldLookup(MethodVisitor mv, String classInternalName, String fieldName) {
+    private void emitParentFieldLookupByName(MethodVisitor mv, String classInternalName, String fieldName) {
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
         mv.visitLdcInsn(fieldName);
-        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "getField", "(Ljava/lang/String;)" + FIELD_INFO_DESC, true);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "fieldIndex", "(Ljava/lang/String;)I", true);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "getField", "(I)" + FIELD_INFO_DESC, true);
         mv.visitInsn(Opcodes.ARETURN);
     }
 
@@ -554,36 +667,25 @@ final class ReflectorClassGenerator {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "getMethods", "()[Ljava/lang/String;", null, null);
         mv.visitCode();
         if (includeMethodsMetadata) {
-            if (parentReflectTypeName != null) {
-                mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, "METHOD_NAMES", "[Ljava/lang/String;");
-                mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
-                mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "getMethods", "()[Ljava/lang/String;", true);
-                mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "mergeMethodNames", "([Ljava/lang/String;[Ljava/lang/String;)[Ljava/lang/String;", false);
-                mv.visitInsn(Opcodes.ARETURN);
-            } else {
-                mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, "METHOD_NAMES", "[Ljava/lang/String;");
-                mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "[Ljava/lang/String;", "clone", "()Ljava/lang/Object;", false);
-                mv.visitTypeInsn(Opcodes.CHECKCAST, "[Ljava/lang/String;");
-                mv.visitInsn(Opcodes.ARETURN);
-            }
+            mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, "METHOD_NAMES", "[Ljava/lang/String;");
+            mv.visitInsn(Opcodes.ARETURN);
         } else if (parentReflectTypeName != null) {
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
             mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "getMethods", "()[Ljava/lang/String;", true);
             mv.visitInsn(Opcodes.ARETURN);
         } else {
-            AsmUtils.pushInt(mv, 0);
-            mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/String");
+            mv.visitFieldInsn(Opcodes.GETSTATIC, GENERATED_REFLECTOR, "NO_METHOD_NAMES", "[Ljava/lang/String;");
             mv.visitInsn(Opcodes.ARETURN);
         }
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
 
-    private void writeHasMethod(ClassWriter cw, String classInternalName, List<String> methodNames, boolean includeMethodsMetadata, String parentReflectTypeName) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "hasMethod", "(Ljava/lang/String;)Z", null, null);
+    private void writeMethodIndex(ClassWriter cw, String classInternalName, List<String> methodNames, boolean includeMethodsMetadata, String parentReflectTypeName) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "methodIndex", "(Ljava/lang/String;)I", null, null);
         mv.visitCode();
         if (!includeMethodsMetadata) {
-            emitParentBooleanOrFalse(mv, classInternalName, parentReflectTypeName, "hasMethod", "(Ljava/lang/String;)Z");
+            emitParentIntOrMinusOne(mv, classInternalName, parentReflectTypeName, "methodIndex", "(Ljava/lang/String;)I");
             mv.visitMaxs(0, 0);
             mv.visitEnd();
             return;
@@ -591,7 +693,7 @@ final class ReflectorClassGenerator {
         Label nonNull = new Label();
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitJumpInsn(Opcodes.IFNONNULL, nonNull);
-        mv.visitInsn(Opcodes.ICONST_0);
+        AsmUtils.pushInt(mv, -1);
         mv.visitInsn(Opcodes.IRETURN);
         mv.visitLabel(nonNull);
         AsmUtils.emitStringEqualsDispatch(
@@ -599,67 +701,86 @@ final class ReflectorClassGenerator {
                 1,
                 methodNames,
                 index -> {
-                    mv.visitInsn(Opcodes.ICONST_1);
+                    AsmUtils.pushInt(mv, index);
                     mv.visitInsn(Opcodes.IRETURN);
                 },
-                () -> emitParentBooleanDefault(mv, classInternalName, parentReflectTypeName, "hasMethod", "(Ljava/lang/String;)Z", 1)
+                () -> emitParentIntDefault(mv, classInternalName, parentReflectTypeName, "methodIndex", "(Ljava/lang/String;)I", 1)
         );
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
 
-    private void writeGetMethod(ClassWriter cw, String classInternalName, Map<String, List<ExecutableElement>> methodsByName, boolean includeMethodsMetadata, boolean includeAnnotationMetadata, String parentReflectTypeName) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "getMethod", "(Ljava/lang/String;)[Lcom/nicleo/kora/core/runtime/MethodInfo;", null, null);
+    private void writeGetMethod(ClassWriter cw, String classInternalName, Map<String, List<ExecutableElement>> methodsByName, List<String> methodNames, boolean includeMethodsMetadata, boolean includeAnnotationMetadata, String parentReflectTypeName) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "getMethod", "(I)[Lcom/nicleo/kora/core/runtime/MethodInfo;", null, null);
         mv.visitCode();
         if (!includeMethodsMetadata) {
-            emitParentMethodArrayOrEmpty(mv, classInternalName, parentReflectTypeName);
+            emitParentMethodArrayOrEmptyByIndex(mv, classInternalName, parentReflectTypeName);
             mv.visitMaxs(0, 0);
             mv.visitEnd();
             return;
         }
-        List<String> methodNames = new ArrayList<>(methodsByName.keySet());
-        Label nonNull = new Label();
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitJumpInsn(Opcodes.IFNONNULL, nonNull);
+        if (methodNames.isEmpty()) {
+            mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, "NO_METHODS", "[" + METHOD_INFO_DESC);
+            mv.visitInsn(Opcodes.ARETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+            return;
+        }
+        Label defaultLabel = new Label();
+        Label[] caseLabels = new Label[methodNames.size()];
+        for (int i = 0; i < methodNames.size(); i++) {
+            caseLabels[i] = new Label();
+        }
+        mv.visitVarInsn(Opcodes.ILOAD, 1);
+        mv.visitTableSwitchInsn(0, methodNames.size() - 1, defaultLabel, caseLabels);
+        for (int i = 0; i < methodNames.size(); i++) {
+            String methodName = methodNames.get(i);
+            mv.visitLabel(caseLabels[i]);
+            List<ExecutableElement> localMethods = methodsByName.get(methodName);
+            if (localMethods != null) {
+                emitMethodInfoArray(mv, localMethods, includeAnnotationMetadata, classInternalName);
+                if (parentReflectTypeName != null) {
+                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
+                    mv.visitVarInsn(Opcodes.ASTORE, 2);
+                    mv.visitVarInsn(Opcodes.ALOAD, 2);
+                    mv.visitLdcInsn(methodName);
+                    mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "methodIndex", "(Ljava/lang/String;)I", true);
+                    mv.visitVarInsn(Opcodes.ISTORE, 3);
+                    mv.visitVarInsn(Opcodes.ALOAD, 2);
+                    mv.visitVarInsn(Opcodes.ILOAD, 3);
+                    mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "getMethod", "(I)[Lcom/nicleo/kora/core/runtime/MethodInfo;", true);
+                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "mergeMethodInfos", "([Lcom/nicleo/kora/core/runtime/MethodInfo;[Lcom/nicleo/kora/core/runtime/MethodInfo;)[Lcom/nicleo/kora/core/runtime/MethodInfo;", false);
+                }
+                mv.visitInsn(Opcodes.ARETURN);
+            } else if (parentReflectTypeName != null) {
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
+                mv.visitVarInsn(Opcodes.ASTORE, 2);
+                mv.visitVarInsn(Opcodes.ALOAD, 2);
+                mv.visitLdcInsn(methodName);
+                mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "methodIndex", "(Ljava/lang/String;)I", true);
+                mv.visitVarInsn(Opcodes.ISTORE, 3);
+                mv.visitVarInsn(Opcodes.ALOAD, 2);
+                mv.visitVarInsn(Opcodes.ILOAD, 3);
+                mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "getMethod", "(I)[Lcom/nicleo/kora/core/runtime/MethodInfo;", true);
+                mv.visitInsn(Opcodes.ARETURN);
+            } else {
+                mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, "NO_METHODS", "[" + METHOD_INFO_DESC);
+                mv.visitInsn(Opcodes.ARETURN);
+            }
+        }
+        mv.visitLabel(defaultLabel);
         mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, "NO_METHODS", "[" + METHOD_INFO_DESC);
         mv.visitInsn(Opcodes.ARETURN);
-        mv.visitLabel(nonNull);
-        AsmUtils.emitStringEqualsDispatch(
-                mv,
-                1,
-                methodNames,
-                index -> {
-                    emitMethodInfoArray(mv, methodsByName.get(methodNames.get(index)), includeAnnotationMetadata, classInternalName);
-                    if (parentReflectTypeName != null) {
-                        mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
-                        mv.visitVarInsn(Opcodes.ALOAD, 1);
-                        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "getMethod", "(Ljava/lang/String;)[Lcom/nicleo/kora/core/runtime/MethodInfo;", true);
-                        mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "mergeMethodInfos", "([Lcom/nicleo/kora/core/runtime/MethodInfo;[Lcom/nicleo/kora/core/runtime/MethodInfo;)[Lcom/nicleo/kora/core/runtime/MethodInfo;", false);
-                    }
-                    mv.visitInsn(Opcodes.ARETURN);
-                },
-                () -> {
-                    if (parentReflectTypeName != null) {
-                        mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
-                        mv.visitVarInsn(Opcodes.ALOAD, 1);
-                        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "getMethod", "(Ljava/lang/String;)[Lcom/nicleo/kora/core/runtime/MethodInfo;", true);
-                        mv.visitInsn(Opcodes.ARETURN);
-                    } else {
-                        mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, "NO_METHODS", "[" + METHOD_INFO_DESC);
-                        mv.visitInsn(Opcodes.ARETURN);
-                    }
-                }
-        );
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
 
-    private void emitParentBooleanOrFalse(MethodVisitor mv, String classInternalName, String parentReflectTypeName, String methodName, String descriptor) {
+    private void emitParentIntOrMinusOne(MethodVisitor mv, String classInternalName, String parentReflectTypeName, String methodName, String descriptor) {
         if (parentReflectTypeName != null) {
             Label nonNull = new Label();
             mv.visitVarInsn(Opcodes.ALOAD, 1);
             mv.visitJumpInsn(Opcodes.IFNONNULL, nonNull);
-            mv.visitInsn(Opcodes.ICONST_0);
+            AsmUtils.pushInt(mv, -1);
             mv.visitInsn(Opcodes.IRETURN);
             mv.visitLabel(nonNull);
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
@@ -667,19 +788,19 @@ final class ReflectorClassGenerator {
             mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, methodName, descriptor, true);
             mv.visitInsn(Opcodes.IRETURN);
         } else {
-            mv.visitInsn(Opcodes.ICONST_0);
+            AsmUtils.pushInt(mv, -1);
             mv.visitInsn(Opcodes.IRETURN);
         }
     }
 
-    private void emitParentBooleanDefault(MethodVisitor mv, String classInternalName, String parentReflectTypeName, String methodName, String descriptor, int localIndex) {
+    private void emitParentIntDefault(MethodVisitor mv, String classInternalName, String parentReflectTypeName, String methodName, String descriptor, int localIndex) {
         if (parentReflectTypeName != null) {
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
             mv.visitVarInsn(Opcodes.ALOAD, localIndex);
             mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, methodName, descriptor, true);
             mv.visitInsn(Opcodes.IRETURN);
         } else {
-            mv.visitInsn(Opcodes.ICONST_0);
+            AsmUtils.pushInt(mv, -1);
             mv.visitInsn(Opcodes.IRETURN);
         }
     }
@@ -702,6 +823,18 @@ final class ReflectorClassGenerator {
         }
     }
 
+    private void emitParentObjectOrNullByIndex(MethodVisitor mv, String classInternalName, String parentReflectTypeName, String methodName, String descriptor) {
+        if (parentReflectTypeName != null) {
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
+            mv.visitVarInsn(Opcodes.ILOAD, 1);
+            mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, methodName, descriptor, true);
+            mv.visitInsn(Opcodes.ARETURN);
+        } else {
+            mv.visitInsn(Opcodes.ACONST_NULL);
+            mv.visitInsn(Opcodes.ARETURN);
+        }
+    }
+
     private void emitParentMethodArrayOrEmpty(MethodVisitor mv, String classInternalName, String parentReflectTypeName) {
         if (parentReflectTypeName != null) {
             Label nonNull = new Label();
@@ -714,6 +847,19 @@ final class ReflectorClassGenerator {
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
             mv.visitVarInsn(Opcodes.ALOAD, 1);
             mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "getMethod", "(Ljava/lang/String;)[Lcom/nicleo/kora/core/runtime/MethodInfo;", true);
+            mv.visitInsn(Opcodes.ARETURN);
+        } else {
+            AsmUtils.pushInt(mv, 0);
+            mv.visitTypeInsn(Opcodes.ANEWARRAY, METHOD_INFO);
+            mv.visitInsn(Opcodes.ARETURN);
+        }
+    }
+
+    private void emitParentMethodArrayOrEmptyByIndex(MethodVisitor mv, String classInternalName, String parentReflectTypeName) {
+        if (parentReflectTypeName != null) {
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, classInternalName, "parentReflector", "()" + GENERATED_REFLECTOR_DESC, false);
+            mv.visitVarInsn(Opcodes.ILOAD, 1);
+            mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, GENERATED_REFLECTOR, "getMethod", "(I)[Lcom/nicleo/kora/core/runtime/MethodInfo;", true);
             mv.visitInsn(Opcodes.ARETURN);
         } else {
             AsmUtils.pushInt(mv, 0);
@@ -1271,6 +1417,20 @@ final class ReflectorClassGenerator {
             methodsByName.computeIfAbsent(method.getSimpleName().toString(), ignored -> new ArrayList<>()).add(method);
         }
         return methodsByName;
+    }
+
+    private List<String> expandedMethodNames(TypeElement entityType) {
+        LinkedHashMap<String, Boolean> names = new LinkedHashMap<>();
+        for (ExecutableElement method : context.collectInvokableMethods(entityType)) {
+            names.putIfAbsent(method.getSimpleName().toString(), Boolean.TRUE);
+        }
+        TypeElement parentType = resolveParentReflectType(entityType);
+        if (parentType != null) {
+            for (String name : expandedMethodNames(parentType)) {
+                names.putIfAbsent(name, Boolean.TRUE);
+            }
+        }
+        return new ArrayList<>(names.keySet());
     }
 
     private ExecutableElement findMethod(TypeElement ownerElement, String methodName, int parameterCount) {

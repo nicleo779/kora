@@ -1,5 +1,8 @@
 package com.nicleo.kora.core.query;
 
+import com.nicleo.kora.core.runtime.DbType;
+import com.nicleo.kora.core.runtime.dialect.RenderContext;
+
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -343,12 +346,20 @@ public final class PredicateBuilder {
         if (segments.isEmpty()) {
             return null;
         }
-        return (sql, args, dbType) -> {
-            for (int i = 0; i < segments.size(); i++) {
-                if (i > 0) {
-                    sql.append(' ').append(segments.get(i).operator()).append(' ');
+        return new Condition() {
+            @Override
+            public void appendTo(StringBuilder sql, List<Object> args, DbType dbType) {
+                appendTo(RenderContext.bridge(dbType, sql, args));
+            }
+
+            @Override
+            public void appendTo(RenderContext context) {
+                for (int i = 0; i < segments.size(); i++) {
+                    if (i > 0) {
+                        context.sql().append(' ').append(segments.get(i).operator()).append(' ');
+                    }
+                    segments.get(i).condition().appendTo(context);
                 }
-                segments.get(i).condition().appendTo(sql, args, dbType);
             }
         };
     }

@@ -1,12 +1,12 @@
 package com.nicleo.kora.core.query;
 
-import com.nicleo.kora.core.runtime.DbType;
+import com.nicleo.kora.core.runtime.dialect.RenderContext;
 
 import java.util.Collection;
 import java.util.List;
 
 public interface SqlExpression {
-    void appendTo(StringBuilder sql, List<Object> args, DbType dbType);
+    void appendTo(RenderContext context);
 
     default NamedSqlExpression as(String alias) {
         return new AliasedExpression(this, alias);
