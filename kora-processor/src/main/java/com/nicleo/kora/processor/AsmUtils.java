@@ -9,10 +9,15 @@ import javax.lang.model.type.ArrayType;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.type.TypeVariable;
+import javax.lang.model.type.WildcardType;
 import javax.lang.model.util.Types;
 import java.util.List;
 
 final class AsmUtils {
+    private static final String RUNTIME_TYPES = "com/nicleo/kora/core/runtime/RuntimeTypes";
+    private static final String TYPE_DESC = "Ljava/lang/reflect/Type;";
+
     private AsmUtils() {
     }
 
@@ -143,6 +148,103 @@ final class AsmUtils {
             return;
         }
         mv.visitLdcInsn(Type.getType(descriptor(erased, types)));
+    }
+
+    static void pushTypeLiteral(MethodVisitor mv, TypeMirror typeMirror, Types types) {
+        if (typeMirror == null || typeMirror.getKind() == TypeKind.NONE) {
+            mv.visitInsn(Opcodes.ACONST_NULL);
+            return;
+        }
+        switch (typeMirror.getKind()) {
+            case BOOLEAN, BYTE, SHORT, INT, LONG, CHAR, FLOAT, DOUBLE -> pushClassLiteral(mv, typeMirror, types);
+            case ARRAY -> pushArrayTypeLiteral(mv, (ArrayType) typeMirror, types);
+            case DECLARED -> pushDeclaredTypeLiteral(mv, (DeclaredType) typeMirror, types);
+            case TYPEVAR -> pushTypeVariableLiteral(mv, (TypeVariable) typeMirror, types);
+            case WILDCARD -> pushWildcardTypeLiteral(mv, (WildcardType) typeMirror, types);
+            default -> pushClassLiteral(mv, typeMirror, types);
+        }
+    }
+
+    private static void pushArrayTypeLiteral(MethodVisitor mv, ArrayType arrayType, Types types) {
+        TypeMirror componentType = arrayType.getComponentType();
+        if (isReifiable(componentType)) {
+            pushClassLiteral(mv, arrayType, types);
+            return;
+        }
+        pushTypeLiteral(mv, componentType, types);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNTIME_TYPES, "array", "(" + TYPE_DESC + ")" + TYPE_DESC, false);
+    }
+
+    private static void pushDeclaredTypeLiteral(MethodVisitor mv, DeclaredType declaredType, Types types) {
+        if (declaredType.getTypeArguments().isEmpty()) {
+            pushClassLiteral(mv, declaredType, types);
+            return;
+        }
+        pushClassLiteral(mv, declaredType, types);
+        TypeMirror ownerType = declaredType.getEnclosingType();
+        if (ownerType == null || ownerType.getKind() == TypeKind.NONE) {
+            mv.visitInsn(Opcodes.ACONST_NULL);
+        } else {
+            pushTypeLiteral(mv, ownerType, types);
+        }
+        pushTypeArray(mv, declaredType.getTypeArguments(), types);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNTIME_TYPES, "parameterized", "(Ljava/lang/Class;" + TYPE_DESC + "[" + TYPE_DESC + ")" + TYPE_DESC, false);
+    }
+
+    private static void pushTypeVariableLiteral(MethodVisitor mv, TypeVariable typeVariable, Types types) {
+        mv.visitLdcInsn(typeVariable.asElement().getSimpleName().toString());
+        TypeMirror upperBound = typeVariable.getUpperBound();
+        if (upperBound == null || upperBound.getKind() == TypeKind.NULL || upperBound.getKind() == TypeKind.NONE) {
+            pushObjectTypeArray(mv);
+        } else {
+            pushTypeArray(mv, List.of(upperBound), types);
+        }
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNTIME_TYPES, "typeVariable", "(Ljava/lang/String;[" + TYPE_DESC + ")" + TYPE_DESC, false);
+    }
+
+    private static void pushWildcardTypeLiteral(MethodVisitor mv, WildcardType wildcardType, Types types) {
+        TypeMirror extendsBound = wildcardType.getExtendsBound();
+        TypeMirror superBound = wildcardType.getSuperBound();
+        if (extendsBound == null) {
+            pushObjectTypeArray(mv);
+        } else {
+            pushTypeArray(mv, List.of(extendsBound), types);
+        }
+        if (superBound == null) {
+            pushTypeArray(mv, List.of(), types);
+        } else {
+            pushTypeArray(mv, List.of(superBound), types);
+        }
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, RUNTIME_TYPES, "wildcard", "([" + TYPE_DESC + "[" + TYPE_DESC + ")" + TYPE_DESC, false);
+    }
+
+    private static void pushObjectTypeArray(MethodVisitor mv) {
+        pushInt(mv, 1);
+        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/reflect/Type");
+        mv.visitInsn(Opcodes.DUP);
+        pushInt(mv, 0);
+        mv.visitLdcInsn(Type.getType("Ljava/lang/Object;"));
+        mv.visitInsn(Opcodes.AASTORE);
+    }
+
+    private static void pushTypeArray(MethodVisitor mv, List<? extends TypeMirror> typeMirrors, Types types) {
+        pushInt(mv, typeMirrors.size());
+        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/reflect/Type");
+        for (int i = 0; i < typeMirrors.size(); i++) {
+            mv.visitInsn(Opcodes.DUP);
+            pushInt(mv, i);
+            pushTypeLiteral(mv, typeMirrors.get(i), types);
+            mv.visitInsn(Opcodes.AASTORE);
+        }
+    }
+
+    private static boolean isReifiable(TypeMirror typeMirror) {
+        return switch (typeMirror.getKind()) {
+            case BOOLEAN, BYTE, SHORT, INT, LONG, CHAR, FLOAT, DOUBLE -> true;
+            case ARRAY -> isReifiable(((ArrayType) typeMirror).getComponentType());
+            case DECLARED -> ((DeclaredType) typeMirror).getTypeArguments().isEmpty();
+            default -> false;
+        };
     }
 
     static void castFromObject(MethodVisitor mv, TypeMirror typeMirror, Types types) {

@@ -35,6 +35,7 @@ final class MapperImplClassGenerator {
     private static final String ANNOTATION_META = "com/nicleo/kora/core/runtime/AnnotationMeta";
     private static final String ANNOTATION_META_DESC = "Lcom/nicleo/kora/core/runtime/AnnotationMeta;";
     private static final String OBJECT_ARRAY_DESC = "[Ljava/lang/Object;";
+    private static final String TYPE_DESC = "Ljava/lang/reflect/Type;";
     private static final String GENERATED_MAPPER_SUPPORT = "com/nicleo/kora/core/runtime/GeneratedMapperSupport";
     private static final String SQL_NODES = "com/nicleo/kora/core/dynamic/SqlNodes";
 
@@ -188,19 +189,19 @@ final class MapperImplClassGenerator {
             if (context.isPageReturn(method.getReturnType())) {
                 int pagingIndex = pagingParameterIndex(parameters);
                 mv.visitVarInsn(Opcodes.ALOAD, pagingIndex);
-                AsmUtils.pushClassLiteral(mv, context.extractPageElementType(method.getReturnType()), context.types());
+                AsmUtils.pushTypeLiteral(mv, context.extractPageElementType(method.getReturnType()), context.types());
                 mv.visitMethodInsn(Opcodes.INVOKESTATIC, GENERATED_MAPPER_SUPPORT, "selectPage",
-                        "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;[" + ANNOTATION_META_DESC + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;Lcom/nicleo/kora/core/query/Paging;Ljava/lang/Class;)Lcom/nicleo/kora/core/query/Page;", false);
+                        "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;[" + ANNOTATION_META_DESC + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;Lcom/nicleo/kora/core/query/Paging;" + TYPE_DESC + ")Lcom/nicleo/kora/core/query/Page;", false);
                 mv.visitInsn(Opcodes.ARETURN);
             } else if (context.isListReturn(method.getReturnType())) {
-                AsmUtils.pushClassLiteral(mv, context.extractListElementType(method.getReturnType()), context.types());
+                AsmUtils.pushTypeLiteral(mv, context.extractListElementType(method.getReturnType()), context.types());
                 mv.visitMethodInsn(Opcodes.INVOKESTATIC, GENERATED_MAPPER_SUPPORT, "selectList",
-                        "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;[" + ANNOTATION_META_DESC + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;Ljava/lang/Class;)Ljava/util/List;", false);
+                        "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;[" + ANNOTATION_META_DESC + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;" + TYPE_DESC + ")Ljava/util/List;", false);
                 mv.visitInsn(Opcodes.ARETURN);
             } else {
-                AsmUtils.pushClassLiteral(mv, method.getReturnType(), context.types());
+                AsmUtils.pushTypeLiteral(mv, method.getReturnType(), context.types());
                 mv.visitMethodInsn(Opcodes.INVOKESTATIC, GENERATED_MAPPER_SUPPORT, "selectOne",
-                        "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;[" + ANNOTATION_META_DESC + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;Ljava/lang/Class;)Ljava/lang/Object;", false);
+                        "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;[" + ANNOTATION_META_DESC + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;" + TYPE_DESC + ")Ljava/lang/Object;", false);
                 TypeKind returnKind = context.types().erasure(method.getReturnType()).getKind();
                 if (returnKind != TypeKind.VOID) {
                     if (returnKind.isPrimitive()) {

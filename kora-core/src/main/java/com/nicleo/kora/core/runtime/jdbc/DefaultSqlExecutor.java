@@ -25,6 +25,7 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -106,7 +107,7 @@ public class DefaultSqlExecutor implements SqlExecutor {
     @Override
     public <T> List<T> selectList(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
         SqlRequest request = applyInterceptors(context, new SqlRequest(sql, args));
-        return executeQuery(request.getSql(), request.getArgs(), context, createRowMapper(resultType));
+        return executeQuery(request.getSql(), request.getArgs(), context, createRowMapper(resultType, genericResultType(context, resultType)));
     }
 
     @Override
@@ -401,14 +402,18 @@ public class DefaultSqlExecutor implements SqlExecutor {
         return String.valueOf(value);
     }
 
-    private <T> RowMapper<T> createRowMapper(Class<T> resultType) {
+    private Type genericResultType(SqlExecutionContext context, Class<?> resultType) {
+        return context == null || context.getGenericResultType() == null ? resultType : context.getGenericResultType();
+    }
+
+    private <T> RowMapper<T> createRowMapper(Class<T> resultType, Type genericResultType) {
         if (Map.class.isAssignableFrom(resultType)) {
             return resultSet -> resultType.cast(readRowAsMap(resultSet));
         }
         GeneratedReflector<T> reflector = GeneratedReflectors.get(resultType);
         if(reflector == null)
             return resultSet -> typeConverter.cast(resultSet, 1, resultType);
-        return new GeneratedRowMapper<>(resultType, reflector, typeConverter);
+        return new GeneratedRowMapper<>(resultType, genericResultType, reflector, typeConverter);
     }
 
     private Map<String, Object> readRowAsMap(ResultSet resultSet) throws SQLException {

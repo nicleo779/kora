@@ -9,6 +9,7 @@ import com.nicleo.kora.core.runtime.TypeConverter;
 
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.lang.reflect.TypeVariable;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -48,21 +49,27 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
     private volatile ColumnPlan plan;
 
     public GeneratedRowMapper(Class<T> entityType, GeneratedReflector<T> reflector, TypeConverter typeConverter) {
+        this(entityType, entityType, reflector, typeConverter);
+    }
+
+    public GeneratedRowMapper(Class<T> entityType, Type genericEntityType, GeneratedReflector<T> reflector, TypeConverter typeConverter) {
         Objects.requireNonNull(entityType, "entityType");
+        Type effectiveEntityType = genericEntityType == null ? entityType : genericEntityType;
         this.reflector = Objects.requireNonNull(reflector, "reflector");
         this.typeConverter = Objects.requireNonNull(typeConverter, "typeConverter");
 
-        MappingCacheKey cacheKey = new MappingCacheKey(entityType, reflector.getClass());
-        this.mapping = ENTITY_PLANS.computeIfAbsent(cacheKey, ignored -> buildEntityMappingPlan(entityType, reflector));
+        MappingCacheKey cacheKey = new MappingCacheKey(effectiveEntityType, reflector.getClass());
+        this.mapping = ENTITY_PLANS.computeIfAbsent(cacheKey, ignored -> buildEntityMappingPlan(entityType, effectiveEntityType, reflector));
         this.constructorBuffer = mapping.usesConstructor() ? new Object[mapping.constructorDefaults.length] : null;
         this.setterBuffer = mapping.strategy == Strategy.CONSTRUCTOR_WITH_SETTERS ? new Object[mapping.setterFieldIndex.length] : null;
     }
 
-    private static EntityMappingPlan buildEntityMappingPlan(Class<?> entityType, GeneratedReflector<?> reflector) {
+    private static EntityMappingPlan buildEntityMappingPlan(Class<?> entityType, Type genericEntityType, GeneratedReflector<?> reflector) {
         ParameterInfo[] constructorParams = resolveConstructorParams(reflector, entityType);
-        Object[] constructorDefaults = buildConstructorDefaults(constructorParams);
+        Map<String, Type> typeVariables = resolveTypeVariables(entityType, genericEntityType);
+        Object[] constructorDefaults = buildConstructorDefaults(constructorParams, typeVariables);
 
-        FieldBinding[] bindings = buildFieldBindings(reflector, constructorParams, entityType.isRecord());
+        FieldBinding[] bindings = buildFieldBindings(reflector, constructorParams, entityType.isRecord(), typeVariables);
         Map<String, FieldBinding> fieldByKey = buildFieldIndex(bindings, reflector);
 
         int setterCount = countSetterSlots(bindings);
@@ -199,17 +206,18 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
         return params == null ? new ParameterInfo[0] : params;
     }
 
-    private static Object[] buildConstructorDefaults(ParameterInfo[] params) {
+    private static Object[] buildConstructorDefaults(ParameterInfo[] params, Map<String, Type> typeVariables) {
         Object[] defaults = new Object[params.length];
         for (int i = 0; i < params.length; i++) {
-            defaults[i] = primitiveDefault(resolveRawType(params[i].type()));
+            defaults[i] = primitiveDefault(resolveRawType(resolveType(params[i].type(), typeVariables)));
         }
         return defaults;
     }
 
     private static FieldBinding[] buildFieldBindings(GeneratedReflector<?> reflector,
                                                      ParameterInfo[] constructorParams,
-                                                     boolean isRecord) {
+                                                     boolean isRecord,
+                                                     Map<String, Type> typeVariables) {
         String[] fieldNames = reflector.getFields();
         FieldBinding[] bindings = new FieldBinding[fieldNames.length];
         int setterSlot = 0;
@@ -219,7 +227,7 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
             if (fieldInfo == null) {
                 throw new SqlExecutorException("Missing field metadata for property: " + fieldName);
             }
-            Class<?> targetType = resolveTargetType(fieldInfo.type());
+            Class<?> targetType = resolveTargetType(fieldInfo.type(), typeVariables);
             int argIndex = indexOfParam(constructorParams, fieldName);
             int slot = (argIndex < 0 && !isRecord) ? setterSlot++ : -1;
             bindings[i] = new FieldBinding(i, fieldName, targetType, argIndex, slot);
@@ -283,9 +291,37 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
 
     // ==================== type helpers ====================
 
-    private static Class<?> resolveTargetType(Type type) {
-        Class<?> rawType = resolveRawType(type);
+    private static Class<?> resolveTargetType(Type type, Map<String, Type> typeVariables) {
+        Class<?> rawType = resolveRawType(resolveType(type, typeVariables));
         return rawType == null ? null : wrapPrimitive(rawType);
+    }
+
+    private static Type resolveType(Type type, Map<String, Type> typeVariables) {
+        if (type instanceof TypeVariable<?> typeVariable) {
+            Type resolved = typeVariables.get(typeVariable.getName());
+            if (resolved != null) {
+                return resolved;
+            }
+            Type[] bounds = typeVariable.getBounds();
+            return bounds.length == 0 ? Object.class : resolveType(bounds[0], typeVariables);
+        }
+        return type;
+    }
+
+    private static Map<String, Type> resolveTypeVariables(Class<?> rawType, Type genericType) {
+        if (!(genericType instanceof ParameterizedType parameterized)) {
+            return Map.of();
+        }
+        if (parameterized.getRawType() != rawType) {
+            return Map.of();
+        }
+        TypeVariable<?>[] variables = rawType.getTypeParameters();
+        Type[] arguments = parameterized.getActualTypeArguments();
+        Map<String, Type> mappings = new HashMap<>(variables.length);
+        for (int i = 0; i < variables.length && i < arguments.length; i++) {
+            mappings.put(variables[i].getName(), arguments[i]);
+        }
+        return Map.copyOf(mappings);
     }
 
     private static Class<?> resolveRawType(Type type) {
@@ -354,7 +390,7 @@ public final class GeneratedRowMapper<T> implements RowMapper<T> {
 
     // ==================== value records ====================
 
-    private record MappingCacheKey(Class<?> entityType,
+    private record MappingCacheKey(Type entityType,
                                    Class<?> reflectorType) {
     }
 

@@ -7,6 +7,7 @@ import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
 import java.util.Arrays;
+import java.util.Objects;
 
 public final class RuntimeTypes {
     private static final Type[] NO_TYPES = new Type[0];
@@ -48,12 +49,40 @@ public final class RuntimeTypes {
         public Type getOwnerType() {
             return ownerType;
         }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof ParameterizedType parameterizedType)) {
+                return false;
+            }
+            return Objects.equals(rawType, parameterizedType.getRawType())
+                    && Objects.equals(ownerType, parameterizedType.getOwnerType())
+                    && Arrays.equals(actualTypeArguments, parameterizedType.getActualTypeArguments());
+        }
+
+        @Override
+        public int hashCode() {
+            return Arrays.hashCode(actualTypeArguments)
+                    ^ Objects.hashCode(ownerType)
+                    ^ Objects.hashCode(rawType);
+        }
     }
 
     private record SimpleGenericArrayType(Type genericComponentType) implements GenericArrayType {
         @Override
         public Type getGenericComponentType() {
             return genericComponentType;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof GenericArrayType arrayType
+                    && Objects.equals(genericComponentType, arrayType.getGenericComponentType());
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hashCode(genericComponentType);
         }
     }
 
@@ -77,6 +106,20 @@ public final class RuntimeTypes {
                 return "?";
             }
             return "? extends " + Arrays.toString(upperBounds);
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof WildcardType wildcardType)) {
+                return false;
+            }
+            return Arrays.equals(upperBounds, wildcardType.getUpperBounds())
+                    && Arrays.equals(lowerBounds, wildcardType.getLowerBounds());
+        }
+
+        @Override
+        public int hashCode() {
+            return Arrays.hashCode(upperBounds) ^ Arrays.hashCode(lowerBounds);
         }
     }
 
@@ -149,6 +192,21 @@ public final class RuntimeTypes {
         @Override
         public String toString() {
             return name;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof TypeVariable<?> typeVariable)) {
+                return false;
+            }
+            return Objects.equals(name, typeVariable.getName())
+                    && Objects.equals(getGenericDeclaration(), typeVariable.getGenericDeclaration())
+                    && Arrays.equals(bounds, typeVariable.getBounds());
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hashCode(getGenericDeclaration()) ^ Objects.hashCode(name) ^ Arrays.hashCode(bounds);
         }
     }
 }
