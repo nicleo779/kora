@@ -11,19 +11,6 @@
 
 当前仓库包含核心运行时、注解处理器、Spring Boot / Quarkus 集成，以及一个可直接运行的 `simple` 示例模块。
 
-## 模块
-
-- `kora-core`
-  注解、运行时接口、JDBC 执行、Wrapper DSL、分页、Reflector、Dialect SPI。
-- `kora-processor`
-  编译期扫描、Mapper 实现生成、实体表元数据生成、Reflector 生成。
-- `kora-quarkus`
-  Quarkus 扩展运行时、`SqlExecutor` 默认生产者、Mapper Bean 自动注册、静态 `Sql` 入口绑定。
-- `kora-spring-boot`
-  Spring Boot 自动配置、事务感知 `SqlSession`、Mapper Bean 自动注册、静态 `Sql` 入口。
-- `simple`
-  仓库内示例，覆盖 XML Mapper、Wrapper、分页、Reflector、批量 CRUD、Spring 风格扫描配置。
-
 ## 当前能力
 
 - `@KoraScan` 扫描实体包、Mapper 包，XML 通过 `-Akora.mapper=...` 指定
@@ -37,6 +24,7 @@
 - `@MapperCapability` 共享能力委托
 - `Page<T>` 分页
 - `Map<String, Object>`、基础类型、实体映射
+- `SqlExecutor` Debug 级别 SQL 与参数日志
 - Spring Boot 自动注册 `SqlSessionFactory`、`SqlSession`、Mapper Bean
 - Quarkus 自动注册 `SqlExecutor`、Mapper Bean
 - 静态 `Sql.query()` / `Sql.from(...)` / `Sql.select(...)` 查询入口
@@ -53,8 +41,8 @@
 
 ```kotlin
 dependencies {
-    implementation("com.nicleo:kora-core:1.0.0")
-    annotationProcessor("com.nicleo:kora-processor:1.0.0")
+    implementation("com.nicleo:kora-core:1.1.0")
+    annotationProcessor("com.nicleo:kora-processor:1.1.0")
 }
 ```
 
@@ -219,6 +207,18 @@ UserMapper userMapper = new UserMapperImpl(sqlSession);
 User user = userMapper.selectById(1L);
 ```
 
+### SQL Debug 日志
+
+`DefaultSqlExecutor` 会在 `DEBUG` 级别打印执行 SQL 与参数。
+
+Spring Boot 示例：
+
+```yaml
+logging:
+  level:
+    com.nicleo.kora.core.runtime.jdbc.DefaultSqlExecutor: DEBUG
+```
+
 ## Wrapper DSL
 
 除了 XML，也可以直接使用 Wrapper DSL 构造查询。
@@ -369,8 +369,8 @@ public class UpdateMapperImpl<T> extends AbstractMapper<T> implements UpdateMapp
 
 ```kotlin
 dependencies {
-    implementation("com.nicleo:kora-spring-boot:1.0.0")
-    annotationProcessor("com.nicleo:kora-processor:1.0.0")
+    implementation("com.nicleo:kora-spring-boot:1.1.0")
+    annotationProcessor("com.nicleo:kora-processor:1.1.0")
 }
 ```
 
@@ -438,8 +438,8 @@ Sql.deleteById(User.class, 1L);
 
 ```kotlin
 dependencies {
-    implementation("com.nicleo:kora-quarkus:1.0.0")
-    annotationProcessor("com.nicleo:kora-processor:1.0.0")
+    implementation("com.nicleo:kora-quarkus:1.1.0")
+    annotationProcessor("com.nicleo:kora-processor:1.1.0")
 }
 ```
 
@@ -482,36 +482,13 @@ User user = Sql.from(Tables.get(User.class))
         .one(User.class);
 ```
 
-## 构建与测试
+## 本地验证
 
 运行全部测试：
 
 ```bash
 ./gradlew test
 ```
-
-发布到本地 Maven：
-
-```bash
-./gradlew publishToMavenLocal
-```
-
-发布到 Repsy：
-
-```bash
-./gradlew publishAllPublicationsToRepsyRepository \
-  -PrepsyUsername=${providers.environmentVariable("REPSY_USERNAME")} \
-  -PrepsyPassword=your-password
-```
-
-也可以使用环境变量：
-
-- `REPSY_USERNAME`
-- `REPSY_PASSWORD`
-
-仓库地址：
-
-- `https://repo.repsy.io/${providers.environmentVariable("REPSY_USERNAME")}/public`
 
 ## 性能测试
 
@@ -616,24 +593,3 @@ xychart-beta
 - 第三组柱状为 `jOOQ`
 - 第四组柱状为 `Jimmer`
 
-## 项目结构
-
-```text
-.
-|-- kora-core
-|-- kora-processor
-|-- kora-quarkus
-|-- kora-quarkus-deployment
-|-- kora-spring-boot
-`-- simple
-```
-
-## 参考文件
-
-- `simple/src/main/java/com/example/simple/config/KoraSimpleConfig.java`
-- `simple/src/main/java/com/example/simple/mapper/UserMapper.java`
-- `simple/src/main/resources/mapper/UserMapper.xml`
-- `simple/src/test/java/com/example/simple/SimpleIntegrationTest.java`
-- `simple/src/test/java/com/example/simple/benchmark/SimpleMapperPerformanceBenchmark.java`
-- `kora-quarkus-deployment/src/test/java/com/nicleo/kora/quarkus/deployment/test/KoraQuarkusProcessorTest.java`
-- `kora-spring-boot/src/test/java/com/nicleo/kora/spring/boot/autoconfigure/KoraAutoConfigurationTest.java`

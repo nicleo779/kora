@@ -15,6 +15,8 @@ import com.nicleo.kora.core.runtime.SqlRequest;
 import com.nicleo.kora.core.runtime.SqlExecutor;
 import com.nicleo.kora.core.runtime.SqlExecutorException;
 import com.nicleo.kora.core.runtime.TypeConverter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
 import java.math.BigDecimal;
@@ -39,9 +41,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.UUID;
+import java.util.stream.Collectors;
 
 public class DefaultSqlExecutor implements SqlExecutor {
+    private static final Logger logger = LoggerFactory.getLogger(DefaultSqlExecutor.class);
+
     private final DataSource dataSource;
     private TypeConverter typeConverter;
     private SqlPagingSupport sqlPagingSupport;
@@ -111,6 +115,7 @@ public class DefaultSqlExecutor implements SqlExecutor {
     @Override
     public <T> List<T> selectList(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
         SqlRequest request = applyInterceptors(context, new SqlRequest(sql, args));
+        logSql(context, "query", request.getSql(), request.getArgs());
         return executeQuery(request.getSql(), request.getArgs(), createRowMapper(resultType));
     }
 
@@ -165,6 +170,7 @@ public class DefaultSqlExecutor implements SqlExecutor {
     @Override
     public int update(String sql, Object[] args, SqlExecutionContext context) {
         SqlRequest request = applyInterceptors(context, new SqlRequest(sql, args));
+        logSql(context, "update", request.getSql(), request.getArgs());
         try (var connection = openConnection()) {
             try (PreparedStatement statement = connection.prepareStatement(request.getSql())) {
                 bindParameters(statement, request.getArgs());
@@ -182,6 +188,7 @@ public class DefaultSqlExecutor implements SqlExecutor {
 
     public <T> T updateAndReturnGeneratedKey(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
         SqlRequest request = applyInterceptors(context, new SqlRequest(sql, args));
+        logSql(context, "updateAndReturnGeneratedKey", request.getSql(), request.getArgs());
         try (var connection = openConnection()) {
             try (PreparedStatement statement = connection.prepareStatement(request.getSql(), Statement.RETURN_GENERATED_KEYS)) {
                 bindParameters(statement, request.getArgs());
@@ -212,6 +219,7 @@ public class DefaultSqlExecutor implements SqlExecutor {
             return new int[0];
         }
         SqlRequest request = applyInterceptors(context, new SqlRequest(sql, new Object[0]));
+        logBatchSql(context, request.getSql(), batchArgs);
         try (var connection = openConnection()) {
             try (PreparedStatement statement = connection.prepareStatement(request.getSql())) {
                 for (Object[] args : batchArgs) {
@@ -248,6 +256,81 @@ public class DefaultSqlExecutor implements SqlExecutor {
 
     protected Connection openConnection() throws SQLException {
         return dataSource.getConnection();
+    }
+
+    private void logSql(SqlExecutionContext context, String operation, String sql, Object[] args) {
+        if (!logger.isDebugEnabled()) {
+            return;
+        }
+        logger.debug("Executing SQL [{}] mapper={} statement={} sql={} args={}",
+                operation,
+                mapperClassName(context),
+                statementId(context),
+                sql,
+                formatArgs(args));
+    }
+
+    private void logBatchSql(SqlExecutionContext context, String sql, List<Object[]> batchArgs) {
+        if (!logger.isDebugEnabled()) {
+            return;
+        }
+        logger.debug("Executing SQL [batch] mapper={} statement={} sql={} batchSize={} args={}",
+                mapperClassName(context),
+                statementId(context),
+                sql,
+                batchArgs.size(),
+                batchArgs.stream().map(this::formatArgs).collect(Collectors.toList()));
+    }
+
+    private String mapperClassName(SqlExecutionContext context) {
+        return context == null || context.getMapperClassName() == null ? "-" : context.getMapperClassName();
+    }
+
+    private String statementId(SqlExecutionContext context) {
+        return context == null || context.getStatementId() == null ? "-" : context.getStatementId();
+    }
+
+    private String formatArgs(Object[] args) {
+        if (args == null || args.length == 0) {
+            return "[]";
+        }
+        return Arrays.stream(args)
+                .map(this::formatArg)
+                .collect(Collectors.joining(", ", "[", "]"));
+    }
+
+    private String formatArg(Object value) {
+        if (value == null) {
+            return "null";
+        }
+        if (value instanceof byte[] bytes) {
+            return Arrays.toString(bytes);
+        }
+        if (value instanceof short[] values) {
+            return Arrays.toString(values);
+        }
+        if (value instanceof int[] values) {
+            return Arrays.toString(values);
+        }
+        if (value instanceof long[] values) {
+            return Arrays.toString(values);
+        }
+        if (value instanceof float[] values) {
+            return Arrays.toString(values);
+        }
+        if (value instanceof double[] values) {
+            return Arrays.toString(values);
+        }
+        if (value instanceof char[] values) {
+            return Arrays.toString(values);
+        }
+        if (value instanceof boolean[] values) {
+            return Arrays.toString(values);
+        }
+        if (value instanceof Object[] values) {
+            return Arrays.deepToString(values);
+        }
+        return String.valueOf(value);
     }
 
     private <T> RowMapper<T> createRowMapper(Class<T> resultType) {
