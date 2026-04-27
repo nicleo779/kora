@@ -3,7 +3,10 @@ package com.nicleo.kora.core.mapper;
 import com.nicleo.kora.core.annotation.IdStrategy;
 import com.nicleo.kora.core.query.Column;
 import com.nicleo.kora.core.query.EntityTable;
+import com.nicleo.kora.core.query.QueryDefinition;
 import com.nicleo.kora.core.query.Tables;
+import com.nicleo.kora.core.query.UpdateDefinition;
+import com.nicleo.kora.core.query.WhereDefinition;
 import com.nicleo.kora.core.runtime.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,7 +30,11 @@ class BaseMapperImplIdStrategyTest {
         Tables.register(CustomEntity.class, CustomTable.CUSTOMS);
         Tables.register(SessionCustomEntity.class, SessionCustomTable.SESSION_CUSTOMS);
         Tables.register(AutoIdEntity.class, AutoIdTable.AUTO_IDS);
-        GeneratedReflectors.install(new TestReflectorResolver());
+        GeneratedReflectors.register(ManualIdEntity.class, new ManualIdReflector());
+        GeneratedReflectors.register(UuidEntity.class, new UuidReflector());
+        GeneratedReflectors.register(CustomEntity.class, new CustomReflector());
+        GeneratedReflectors.register(SessionCustomEntity.class, new SessionCustomReflector());
+        GeneratedReflectors.register(AutoIdEntity.class, new AutoIdReflector());
     }
 
     @Test
@@ -101,6 +108,7 @@ class BaseMapperImplIdStrategyTest {
     private static final class RecordingSqlExecutor implements SqlExecutor {
         private TypeConverter typeConverter = new TypeConverter();
         private IdGenerator idGenerator;
+        private final SqlGenerator sqlGenerator = new StubSqlGenerator();
         private String lastSql;
         private Object[] lastArgs;
         private String lastBatchSql;
@@ -125,10 +133,10 @@ class BaseMapperImplIdStrategyTest {
         }
 
         @Override
-        public Object updateAndReturnGeneratedKey(String sql, Object[] args) {
+        public <T> T updateAndReturnGeneratedKey(String sql, Object[] args, Class<T> resultType) {
             this.lastSql = sql;
             this.lastArgs = args;
-            return generatedKey;
+            return generatedKey == null ? null : resultType.cast(generatedKey);
         }
 
         @Override
@@ -162,22 +170,22 @@ class BaseMapperImplIdStrategyTest {
 
         @Override
         public <T> T selectOne(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
-            return selectOne(sql,args,resultType);
+            return selectOne(sql, args, resultType);
         }
 
         @Override
         public <T> List<T> selectList(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
-            return selectList(sql,args,resultType);
+            return selectList(sql, args, resultType);
         }
 
         @Override
         public int update(String sql, Object[] args, SqlExecutionContext context) {
-            return update(sql,args);
+            return update(sql, args);
         }
 
         @Override
         public int[] executeBatch(String sql, List<Object[]> batchArgs, SqlExecutionContext context) {
-            return executeBatch(sql,batchArgs);
+            return executeBatch(sql, batchArgs);
         }
 
         @Override
@@ -192,12 +200,57 @@ class BaseMapperImplIdStrategyTest {
 
         @Override
         public SqlGenerator getSqlGenerator() {
-            throw new UnsupportedOperationException();
+            return sqlGenerator;
         }
 
         @Override
         public <T> List<T> executeQuery(String sql, Object[] args, RowMapper<T> rowMapper) {
             throw new UnsupportedOperationException();
+        }
+    }
+
+    /**
+     * Minimal SqlGenerator used by {@link RecordingSqlExecutor} so BaseMapperImpl's
+     * insert path can produce canonical SQL without bringing in the full dialect stack.
+     * Only {@link #renderInsert} is exercised by these tests.
+     */
+    private static final class StubSqlGenerator implements SqlGenerator {
+        @Override
+        public SqlRequest renderQuery(QueryDefinition definition, DbType dbType) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SqlRequest renderSelect(EntityTable<?> table, WhereDefinition whereDefinition, DbType dbType) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SqlRequest renderDelete(EntityTable<?> table, WhereDefinition whereDefinition, DbType dbType) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SqlRequest renderUpdate(EntityTable<?> table, UpdateDefinition updateDefinition, DbType dbType) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SqlRequest renderInsert(EntityTable<?> table, List<String> columns, List<Object> args, DbType dbType) {
+            StringBuilder sql = new StringBuilder("insert into ")
+                    .append(table.tableName())
+                    .append(" (");
+            for (int i = 0; i < columns.size(); i++) {
+                if (i > 0) sql.append(", ");
+                sql.append(columns.get(i));
+            }
+            sql.append(") values (");
+            for (int i = 0; i < args.size(); i++) {
+                if (i > 0) sql.append(", ");
+                sql.append('?');
+            }
+            sql.append(')');
+            return new SqlRequest(sql.toString(), args.toArray());
         }
     }
 
@@ -485,29 +538,6 @@ class BaseMapperImplIdStrategyTest {
         }
     }
 
-    private static final class TestReflectorResolver implements GeneratedReflectors.Resolver {
-        @Override
-        @SuppressWarnings("unchecked")
-        public <T> GeneratedReflector<T> get(Class<T> type) {
-            if (type == ManualIdEntity.class) {
-                return (GeneratedReflector<T>) new ManualIdReflector();
-            }
-            if (type == UuidEntity.class) {
-                return (GeneratedReflector<T>) new UuidReflector();
-            }
-            if (type == CustomEntity.class) {
-                return (GeneratedReflector<T>) new CustomReflector();
-            }
-            if (type == SessionCustomEntity.class) {
-                return (GeneratedReflector<T>) new SessionCustomReflector();
-            }
-            if (type == AutoIdEntity.class) {
-                return (GeneratedReflector<T>) new AutoIdReflector();
-            }
-            throw new IllegalArgumentException(type.getName());
-        }
-    }
-
     private static final class ManualIdReflector implements GeneratedReflector<ManualIdEntity> {
         @Override
         public ManualIdEntity newInstance() {
@@ -515,24 +545,29 @@ class BaseMapperImplIdStrategyTest {
         }
 
         @Override
-        public Object invoke(ManualIdEntity target, String method, Object[] args) {
+        public ClassInfo getClassInfo() {
+            return null;
+        }
+
+        @Override
+        public Object invoke(ManualIdEntity target, int index, Object[] args) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public void set(ManualIdEntity target, String property, Object value) {
-            switch (property) {
-                case "id" -> target.setId((Long) value);
+        public void set(ManualIdEntity target, int index, Object value) {
+            switch (index) {
+                case 0 -> target.setId((Long) value);
                 default -> {
                 }
             }
         }
 
         @Override
-        public Object get(ManualIdEntity target, String property) {
-            return switch (property) {
-                case "id" -> target.getId();
-                case "name" -> target.getName();
+        public Object get(ManualIdEntity target, int index) {
+            return switch (index) {
+                case 0 -> target.getId();
+                case 1 -> target.getName();
                 default -> null;
             };
         }
@@ -543,8 +578,23 @@ class BaseMapperImplIdStrategyTest {
         }
 
         @Override
-        public FieldInfo getField(String field) {
+        public FieldInfo getField(int index) {
             return null;
+        }
+
+        @Override
+        public String[] getMethods() {
+            return new String[0];
+        }
+
+        @Override
+        public int getMethod(int index) {
+            return -1;
+        }
+
+        @Override
+        public MethodInfo[] getMethod(String name) {
+            return new MethodInfo[0];
         }
     }
 
@@ -555,22 +605,27 @@ class BaseMapperImplIdStrategyTest {
         }
 
         @Override
-        public Object invoke(UuidEntity target, String method, Object[] args) {
+        public ClassInfo getClassInfo() {
+            return null;
+        }
+
+        @Override
+        public Object invoke(UuidEntity target, int index, Object[] args) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public void set(UuidEntity target, String property, Object value) {
-            if ("id".equals(property)) {
+        public void set(UuidEntity target, int index, Object value) {
+            if (index == 0) {
                 target.setId((String) value);
             }
         }
 
         @Override
-        public Object get(UuidEntity target, String property) {
-            return switch (property) {
-                case "id" -> target.getId();
-                case "name" -> target.getName();
+        public Object get(UuidEntity target, int index) {
+            return switch (index) {
+                case 0 -> target.getId();
+                case 1 -> target.getName();
                 default -> null;
             };
         }
@@ -581,8 +636,23 @@ class BaseMapperImplIdStrategyTest {
         }
 
         @Override
-        public FieldInfo getField(String field) {
+        public FieldInfo getField(int index) {
             return null;
+        }
+
+        @Override
+        public String[] getMethods() {
+            return new String[0];
+        }
+
+        @Override
+        public int getMethod(int index) {
+            return -1;
+        }
+
+        @Override
+        public MethodInfo[] getMethod(String name) {
+            return new MethodInfo[0];
         }
     }
 
@@ -593,22 +663,27 @@ class BaseMapperImplIdStrategyTest {
         }
 
         @Override
-        public Object invoke(CustomEntity target, String method, Object[] args) {
+        public ClassInfo getClassInfo() {
+            return null;
+        }
+
+        @Override
+        public Object invoke(CustomEntity target, int index, Object[] args) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public void set(CustomEntity target, String property, Object value) {
-            if ("id".equals(property)) {
+        public void set(CustomEntity target, int index, Object value) {
+            if (index == 0) {
                 target.setId((Long) value);
             }
         }
 
         @Override
-        public Object get(CustomEntity target, String property) {
-            return switch (property) {
-                case "id" -> target.getId();
-                case "name" -> target.getName();
+        public Object get(CustomEntity target, int index) {
+            return switch (index) {
+                case 0 -> target.getId();
+                case 1 -> target.getName();
                 default -> null;
             };
         }
@@ -619,8 +694,23 @@ class BaseMapperImplIdStrategyTest {
         }
 
         @Override
-        public FieldInfo getField(String field) {
+        public FieldInfo getField(int index) {
             return null;
+        }
+
+        @Override
+        public String[] getMethods() {
+            return new String[0];
+        }
+
+        @Override
+        public int getMethod(int index) {
+            return -1;
+        }
+
+        @Override
+        public MethodInfo[] getMethod(String name) {
+            return new MethodInfo[0];
         }
     }
 
@@ -631,22 +721,27 @@ class BaseMapperImplIdStrategyTest {
         }
 
         @Override
-        public Object invoke(SessionCustomEntity target, String method, Object[] args) {
+        public ClassInfo getClassInfo() {
+            return null;
+        }
+
+        @Override
+        public Object invoke(SessionCustomEntity target, int index, Object[] args) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public void set(SessionCustomEntity target, String property, Object value) {
-            if ("id".equals(property)) {
+        public void set(SessionCustomEntity target, int index, Object value) {
+            if (index == 0) {
                 target.setId((Long) value);
             }
         }
 
         @Override
-        public Object get(SessionCustomEntity target, String property) {
-            return switch (property) {
-                case "id" -> target.getId();
-                case "name" -> target.getName();
+        public Object get(SessionCustomEntity target, int index) {
+            return switch (index) {
+                case 0 -> target.getId();
+                case 1 -> target.getName();
                 default -> null;
             };
         }
@@ -657,8 +752,23 @@ class BaseMapperImplIdStrategyTest {
         }
 
         @Override
-        public FieldInfo getField(String field) {
+        public FieldInfo getField(int index) {
             return null;
+        }
+
+        @Override
+        public String[] getMethods() {
+            return new String[0];
+        }
+
+        @Override
+        public int getMethod(int index) {
+            return -1;
+        }
+
+        @Override
+        public MethodInfo[] getMethod(String name) {
+            return new MethodInfo[0];
         }
     }
 
@@ -669,22 +779,27 @@ class BaseMapperImplIdStrategyTest {
         }
 
         @Override
-        public Object invoke(AutoIdEntity target, String method, Object[] args) {
+        public ClassInfo getClassInfo() {
+            return null;
+        }
+
+        @Override
+        public Object invoke(AutoIdEntity target, int index, Object[] args) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public void set(AutoIdEntity target, String property, Object value) {
-            if ("id".equals(property)) {
+        public void set(AutoIdEntity target, int index, Object value) {
+            if (index == 0) {
                 target.setId((Long) value);
             }
         }
 
         @Override
-        public Object get(AutoIdEntity target, String property) {
-            return switch (property) {
-                case "id" -> target.getId();
-                case "name" -> target.getName();
+        public Object get(AutoIdEntity target, int index) {
+            return switch (index) {
+                case 0 -> target.getId();
+                case 1 -> target.getName();
                 default -> null;
             };
         }
@@ -695,8 +810,23 @@ class BaseMapperImplIdStrategyTest {
         }
 
         @Override
-        public FieldInfo getField(String field) {
-            return "id".equals(field) ? new FieldInfo("id", Long.class, 2, null, new com.nicleo.kora.core.runtime.AnnotationMeta[0]) : null;
+        public FieldInfo getField(int index) {
+            return index == 0 ? new FieldInfo("id", Long.class, 2, null, new com.nicleo.kora.core.runtime.AnnotationMeta[0]) : null;
+        }
+
+        @Override
+        public String[] getMethods() {
+            return new String[0];
+        }
+
+        @Override
+        public int getMethod(int index) {
+            return -1;
+        }
+
+        @Override
+        public MethodInfo[] getMethod(String name) {
+            return new MethodInfo[0];
         }
     }
 }

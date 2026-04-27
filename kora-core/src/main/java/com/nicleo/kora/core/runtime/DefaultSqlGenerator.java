@@ -7,7 +7,6 @@ import com.nicleo.kora.core.query.WhereDefinition;
 import com.nicleo.kora.core.runtime.dialect.DefaultSqlDialectRegistry;
 import com.nicleo.kora.core.runtime.dialect.DeleteModel;
 import com.nicleo.kora.core.runtime.dialect.QueryModelMapper;
-import com.nicleo.kora.core.runtime.dialect.QueryModel;
 import com.nicleo.kora.core.runtime.dialect.RenderContext;
 import com.nicleo.kora.core.runtime.dialect.SqlDialect;
 import com.nicleo.kora.core.runtime.dialect.SqlDialectRegistry;

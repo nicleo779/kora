@@ -8,6 +8,7 @@ import com.nicleo.kora.core.dynamic.SqlNodes;
 import com.nicleo.kora.core.runtime.BoundSql;
 import com.nicleo.kora.core.runtime.GeneratedReflector;
 import com.nicleo.kora.core.runtime.GeneratedReflectors;
+import com.nicleo.kora.core.runtime.MethodInfo;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -21,16 +22,7 @@ class DynamicSqlRendererTest {
     @BeforeAll
     static void installReflector() {
         GeneratedReflectors.clear();
-        GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
-            @Override
-            @SuppressWarnings("unchecked")
-            public <T> GeneratedReflector<T> get(Class<T> type) {
-                if (type == User.class) {
-                    return (GeneratedReflector<T>) new UserReflector();
-                }
-                throw new IllegalArgumentException("unknown type: " + type);
-            }
-        });
+        GeneratedReflectors.register(User.class, new UserReflector());
     }
 
     @Test
@@ -66,7 +58,7 @@ class DynamicSqlRendererTest {
                 new Object[]{new User(null, 18)}
         ));
 
-        assertEquals("select * from user ", boundSql.getSql());
+        assertEquals("select * from user", boundSql.getSql());
         assertArrayEquals(new Object[0], DynamicSqlArgumentResolver.resolve(boundSql));
     }
 
@@ -202,12 +194,27 @@ class DynamicSqlRendererTest {
         }
 
         @Override
+        public com.nicleo.kora.core.runtime.ClassInfo getClassInfo() {
+            return null;
+        }
+
+        @Override
         public Object invoke(User target, String method, Object[] args) {
             throw new UnsupportedOperationException();
         }
 
         @Override
+        public Object invoke(User target, int index, Object[] args) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void set(User target, String property, Object value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void set(User target, int index, Object value) {
             throw new UnsupportedOperationException();
         }
 
@@ -218,6 +225,41 @@ class DynamicSqlRendererTest {
                 case "age" -> target.getAge();
                 default -> throw new IllegalArgumentException(property);
             };
+        }
+
+        @Override
+        public Object get(User target, int index) {
+            return get(target, getFields()[index]);
+        }
+
+        @Override
+        public String[] getFields() {
+            return new String[]{"name", "age"};
+        }
+
+        @Override
+        public com.nicleo.kora.core.runtime.FieldInfo getField(String field) {
+            return null;
+        }
+
+        @Override
+        public String[] getMethods() {
+            return new String[0];
+        }
+
+        @Override
+        public com.nicleo.kora.core.runtime.FieldInfo getField(int index) {
+            return null;
+        }
+
+        @Override
+        public int getMethod(int index) {
+            return -1;
+        }
+
+        @Override
+        public MethodInfo[] getMethod(String name) {
+            return new MethodInfo[0];
         }
     }
 }

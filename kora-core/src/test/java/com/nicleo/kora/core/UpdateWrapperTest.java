@@ -26,7 +26,7 @@ class UpdateWrapperTest {
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "update `users` set `name` = IF(`users`.`age` >= ?, ?, ?) WHERE `users`.`id` = ?",
+                "update users set name = IF(age >= ?, ?, ?) WHERE id = ?",
                 request.getSql());
         assertArrayEquals(new Object[]{18, "adult", "minor", 1L}, request.getArgs());
     }
@@ -36,12 +36,12 @@ class UpdateWrapperTest {
         TestUserTable users = TestUserTable.USERS;
 
         SqlRequest request = sqlGenerator.renderUpdate(users, Wrapper.update()
-                .set(users.NAME, null)
+                .setNull(users.NAME)
                 .where(where -> where.eq(users.ID, 1L))
                 .toDefinition(), DbType.MYSQL);
 
         assertEquals(
-                "update `users` set `name` = ? WHERE `users`.`id` = ?",
+                "update users set name = ? WHERE id = ?",
                 request.getSql());
         assertArrayEquals(new Object[]{null, 1L}, request.getArgs());
     }

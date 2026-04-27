@@ -134,7 +134,12 @@ public final class PropertyAccess {
 
     private static boolean contains(Object target, Object argument) {
         if (target instanceof Collection<?> collection) {
-            return collection.contains(argument);
+            for (Object item : collection) {
+                if (matches(item, argument)) {
+                    return true;
+                }
+            }
+            return false;
         }
         if (target instanceof Map<?, ?> map) {
             return map.containsKey(argument);
@@ -152,6 +157,13 @@ public final class PropertyAccess {
             return false;
         }
         throw new SqlExecutorException("Unsupported contains(...) on type " + target.getClass().getName());
+    }
+
+    private static boolean matches(Object left, Object right) {
+        if (left instanceof Number leftNumber && right instanceof Number rightNumber) {
+            return Double.compare(leftNumber.doubleValue(), rightNumber.doubleValue()) == 0;
+        }
+        return Objects.equals(left, right);
     }
 
     private static int ordinalOf(Object target) {

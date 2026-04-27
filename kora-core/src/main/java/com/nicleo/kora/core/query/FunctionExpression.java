@@ -1,8 +1,6 @@
 package com.nicleo.kora.core.query;
 
-import com.nicleo.kora.core.runtime.DbType;
-
-import java.util.List;
+import com.nicleo.kora.core.runtime.dialect.RenderContext;
 
 final class FunctionExpression implements SqlExpression {
     private final FunctionRenderer renderer;
@@ -12,12 +10,12 @@ final class FunctionExpression implements SqlExpression {
     }
 
     @Override
-    public void appendTo(StringBuilder sql, List<Object> args, DbType dbType) {
-        renderer.appendTo(sql, args, dbType);
+    public void appendTo(RenderContext context) {
+        renderer.appendTo(context);
     }
 
     @FunctionalInterface
     interface FunctionRenderer {
-        void appendTo(StringBuilder sql, List<Object> args, DbType dbType);
+        void appendTo(RenderContext context);
     }
 }

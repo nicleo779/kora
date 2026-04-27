@@ -1,12 +1,10 @@
 package com.nicleo.kora.core.query;
 
-import com.nicleo.kora.core.runtime.DbType;
-
-import java.util.List;
+import com.nicleo.kora.core.runtime.dialect.RenderContext;
 
 public record Order(SqlExpression expression, boolean ascending) {
-    public void appendTo(StringBuilder sql, List<Object> args, DbType dbType) {
-        expression.appendTo(sql, args, dbType);
-        sql.append(ascending ? " ASC" : " DESC");
+    public void appendTo(RenderContext context) {
+        expression.appendTo(context);
+        context.sql().append(ascending ? " ASC" : " DESC");
     }
 }

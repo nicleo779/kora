@@ -23,19 +23,20 @@ class GeneratedReflectorInheritanceTest {
     @SuppressWarnings("unchecked")
     static void installReflectors() {
         GeneratedReflectors.clear();
-        GeneratedReflectors.install(new GeneratedReflectors.Resolver() {
-            @Override
-            public <T> GeneratedReflector<T> get(Class<T> type) {
-                try {
-                    return (GeneratedReflector<T>) Class
-                            .forName(GeneratedTypeNames.reflectorTypeName(type))
-                            .getConstructor()
-                            .newInstance();
-                } catch (ReflectiveOperationException ex) {
-                    throw new IllegalArgumentException("Unknown type: " + type.getName(), ex);
-                }
-            }
-        });
+        GeneratedReflectors.register(BaseUser.class, newReflector(BaseUser.class));
+        GeneratedReflectors.register(AdminUser.class, newReflector(AdminUser.class));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> GeneratedReflector<T> newReflector(Class<T> type) {
+        try {
+            return (GeneratedReflector<T>) Class
+                    .forName(GeneratedTypeNames.reflectorTypeName(type))
+                    .getConstructor()
+                    .newInstance();
+        } catch (ReflectiveOperationException ex) {
+            throw new IllegalArgumentException("Unknown type: " + type.getName(), ex);
+        }
     }
 
     @Test

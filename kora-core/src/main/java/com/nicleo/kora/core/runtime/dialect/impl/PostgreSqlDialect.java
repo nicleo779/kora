@@ -8,7 +8,7 @@ public final class PostgreSqlDialect extends AbstractSqlDialect {
         super(
                 "postgresql",
                 DbType.POSTGRESQL,
-                new StandardIdentifierPolicy("\""),
+                NativeIdentifierPolicy.postgreSql(),
                 new DialectCapabilities(false, false, false, true, true, true, true, false),
                 new LimitOffsetPagingRenderer()
         );

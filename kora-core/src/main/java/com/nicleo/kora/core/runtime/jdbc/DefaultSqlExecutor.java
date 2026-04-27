@@ -15,23 +15,17 @@ import com.nicleo.kora.core.runtime.SqlRequest;
 import com.nicleo.kora.core.runtime.SqlExecutor;
 import com.nicleo.kora.core.runtime.SqlExecutorException;
 import com.nicleo.kora.core.runtime.TypeConverter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
-import java.math.BigDecimal;
-import java.math.BigInteger;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.time.OffsetDateTime;
-import java.time.OffsetTime;
-import java.time.ZonedDateTime;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -39,9 +33,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.UUID;
+import java.util.stream.Collectors;
 
 public class DefaultSqlExecutor implements SqlExecutor {
+    private static final Logger logger = LoggerFactory.getLogger(DefaultSqlExecutor.class);
+
     private final DataSource dataSource;
     private TypeConverter typeConverter;
     private SqlPagingSupport sqlPagingSupport;
@@ -111,7 +107,7 @@ public class DefaultSqlExecutor implements SqlExecutor {
     @Override
     public <T> List<T> selectList(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
         SqlRequest request = applyInterceptors(context, new SqlRequest(sql, args));
-        return executeQuery(request.getSql(), request.getArgs(), createRowMapper(resultType));
+        return executeQuery(request.getSql(), request.getArgs(), context, createRowMapper(resultType, genericResultType(context, resultType)));
     }
 
     @Override
@@ -167,10 +163,13 @@ public class DefaultSqlExecutor implements SqlExecutor {
         SqlRequest request = applyInterceptors(context, new SqlRequest(sql, args));
         try (var connection = openConnection()) {
             try (PreparedStatement statement = connection.prepareStatement(request.getSql())) {
-                bindParameters(statement, request.getArgs());
-                return statement.executeUpdate();
+                Object[] boundArgs = bindParameters(statement, request.getArgs());
+                int updated = statement.executeUpdate();
+                logSqlSuccess(context, request.getSql(), boundArgs, null, updated);
+                return updated;
             }
         } catch (SQLException ex) {
+            logSqlError(context, request.getSql(), request.getArgs(), null, ex);
             throw new SqlExecutorException("Failed to execute update: " + request.getSql(), ex);
         }
     }
@@ -184,8 +183,9 @@ public class DefaultSqlExecutor implements SqlExecutor {
         SqlRequest request = applyInterceptors(context, new SqlRequest(sql, args));
         try (var connection = openConnection()) {
             try (PreparedStatement statement = connection.prepareStatement(request.getSql(), Statement.RETURN_GENERATED_KEYS)) {
-                bindParameters(statement, request.getArgs());
+                Object[] boundArgs = bindParameters(statement, request.getArgs());
                 int updated = statement.executeUpdate();
+                logSqlSuccess(context, request.getSql(), boundArgs, null, updated);
                 if (updated < 1) {
                     return null;
                 }
@@ -197,6 +197,7 @@ public class DefaultSqlExecutor implements SqlExecutor {
             }
             return null;
         } catch (SQLException ex) {
+            logSqlError(context, request.getSql(), request.getArgs(), null, ex);
             throw new SqlExecutorException("Failed to execute update with generated key: " + request.getSql(), ex);
         }
     }
@@ -218,30 +219,36 @@ public class DefaultSqlExecutor implements SqlExecutor {
                     bindParameters(statement, args);
                     statement.addBatch();
                 }
-                return statement.executeBatch();
+                int[] rows = statement.executeBatch();
+                logSqlSuccess(context, request.getSql(), null, batchArgs, batchRows(rows));
+                return rows;
             }
         } catch (SQLException ex) {
+            logSqlError(context, request.getSql(), null, batchArgs, ex);
             throw new SqlExecutorException("Failed to execute batch: " + request.getSql(), ex);
         }
     }
 
     @Override
     public <T> List<T> executeQuery(String sql, Object[] args, RowMapper<T> rowMapper) {
+        return executeQuery(sql, args, null, rowMapper);
+    }
+
+    private <T> List<T> executeQuery(String sql, Object[] args, SqlExecutionContext context, RowMapper<T> rowMapper) {
         try (var connection = openConnection()) {
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
-                bindParameters(statement, args);
+                Object[] boundArgs = bindParameters(statement, args);
                 try (ResultSet resultSet = statement.executeQuery()) {
                     var results = new ArrayList<T>();
                     while (resultSet.next()) {
                         results.add(rowMapper.mapRow(resultSet));
                     }
-                    if (results.isEmpty()) {
-                        return results;
-                    }
+                    logSqlSuccess(context, sql, boundArgs, null, results.size());
                     return results;
                 }
             }
         } catch (SQLException ex) {
+            logSqlError(context, sql, args, null, ex);
             throw new SqlExecutorException("Failed to execute query: " + sql, ex);
         }
     }
@@ -250,23 +257,163 @@ public class DefaultSqlExecutor implements SqlExecutor {
         return dataSource.getConnection();
     }
 
-    private <T> RowMapper<T> createRowMapper(Class<T> resultType) {
+    private void logSqlSuccess(SqlExecutionContext context, String sql, Object[] args, List<Object[]> batchArgs, Object rows) {
+        if (!logger.isDebugEnabled()) {
+            return;
+        }
+        if (batchArgs != null) {
+            logger.debug("Executing SQL mapper={}.{} sql={} batchSize={} rows={}",
+                    mapperClassName(context),
+                    statementId(context),
+                    formatExecutableBatchSql(sql, batchArgs),
+                    batchArgs.size(),
+                    rows);
+            return;
+        }
+        logger.debug("Executing SQL mapper={}.{} sql={} rows={}",
+                mapperClassName(context),
+                statementId(context),
+                formatExecutableSql(sql, args),
+                rows);
+    }
+
+    private void logSqlError(SqlExecutionContext context, String sql, Object[] args, List<Object[]> batchArgs, SQLException ex) {
+        if (!logger.isErrorEnabled()) {
+            return;
+        }
+        if (batchArgs != null) {
+            logger.error("Executing mapper={}.{} sql={} batchSize={}",
+                    mapperClassName(context),
+                    statementId(context),
+                    formatExecutableBatchSql(sql, batchArgs),
+                    batchArgs.size(),
+                    ex);
+            return;
+        }
+        logger.error("Executing mapper={}.{} sql={}",
+                mapperClassName(context),
+                statementId(context),
+                formatExecutableSql(sql, args),
+                ex);
+    }
+
+    private String mapperClassName(SqlExecutionContext context) {
+        return context == null || context.getMapperClassName() == null ? "-" : context.getMapperClassName();
+    }
+
+    private String statementId(SqlExecutionContext context) {
+        return context == null || context.getStatementId() == null ? "-" : context.getStatementId();
+    }
+
+    private String formatExecutableBatchSql(String sql, List<Object[]> batchArgs) {
+        return batchArgs.stream()
+                .map(args -> formatExecutableSql(sql, args))
+                .collect(Collectors.joining("; "));
+    }
+
+    private String formatExecutableSql(String sql, Object[] args) {
+        if (sql == null || args == null || args.length == 0) {
+            return sql;
+        }
+        StringBuilder builder = new StringBuilder(sql.length() + args.length * 16);
+        int argIndex = 0;
+        boolean inSingleQuotedString = false;
+        for (int i = 0; i < sql.length(); i++) {
+            char ch = sql.charAt(i);
+            if (ch == '\'') {
+                builder.append(ch);
+                if (inSingleQuotedString && i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
+                    builder.append(sql.charAt(++i));
+                    continue;
+                }
+                inSingleQuotedString = !inSingleQuotedString;
+                continue;
+            }
+            if (ch == '?' && !inSingleQuotedString && argIndex < args.length) {
+                builder.append(formatSqlLiteral(args[argIndex++]));
+                continue;
+            }
+            builder.append(ch);
+        }
+        return builder.toString();
+    }
+
+    private Object batchRows(int[] rows) {
+        if (rows == null || rows.length == 0) {
+            return 0;
+        }
+        for (int row : rows) {
+            if (row < 0) {
+                return Arrays.toString(rows);
+            }
+        }
+        return Arrays.stream(rows).sum();
+    }
+
+    private String formatSqlLiteral(Object value) {
+        Object jdbcValue = typeConverter.fieldToColumn(value);
+        if (jdbcValue == null) {
+            return "null";
+        }
+        if (jdbcValue instanceof Number || jdbcValue instanceof Boolean) {
+            return String.valueOf(jdbcValue);
+        }
+        if (jdbcValue instanceof Character character) {
+            return '\'' + escapeSqlLiteral(String.valueOf(character)) + '\'';
+        }
+        return '\'' + escapeSqlLiteral(formatArg(jdbcValue)) + '\'';
+    }
+
+    private String escapeSqlLiteral(String value) {
+        return value.replace("'", "''");
+    }
+
+    private String formatArg(Object value) {
+        if (value == null) {
+            return "null";
+        }
+        if (value instanceof byte[] bytes) {
+            return Arrays.toString(bytes);
+        }
+        if (value instanceof short[] values) {
+            return Arrays.toString(values);
+        }
+        if (value instanceof int[] values) {
+            return Arrays.toString(values);
+        }
+        if (value instanceof long[] values) {
+            return Arrays.toString(values);
+        }
+        if (value instanceof float[] values) {
+            return Arrays.toString(values);
+        }
+        if (value instanceof double[] values) {
+            return Arrays.toString(values);
+        }
+        if (value instanceof char[] values) {
+            return Arrays.toString(values);
+        }
+        if (value instanceof boolean[] values) {
+            return Arrays.toString(values);
+        }
+        if (value instanceof Object[] values) {
+            return Arrays.deepToString(values);
+        }
+        return String.valueOf(value);
+    }
+
+    private Type genericResultType(SqlExecutionContext context, Class<?> resultType) {
+        return context == null || context.getGenericResultType() == null ? resultType : context.getGenericResultType();
+    }
+
+    private <T> RowMapper<T> createRowMapper(Class<T> resultType, Type genericResultType) {
         if (Map.class.isAssignableFrom(resultType)) {
             return resultSet -> resultType.cast(readRowAsMap(resultSet));
         }
-        if (isSimpleResultType(resultType)) {
-            return resultSet -> {
-                Object converted = typeConverter.cast(resultSet, 1, resultType);
-                if (converted == null) {
-                    return null;
-                }
-                @SuppressWarnings("unchecked")
-                T value = (T) converted;
-                return value;
-            };
-        }
         GeneratedReflector<T> reflector = GeneratedReflectors.get(resultType);
-        return new GeneratedRowMapper<>(resultType, reflector, typeConverter);
+        if(reflector == null)
+            return resultSet -> typeConverter.cast(resultSet, 1, resultType);
+        return new GeneratedRowMapper<>(resultType, genericResultType, reflector, typeConverter);
     }
 
     private Map<String, Object> readRowAsMap(ResultSet resultSet) throws SQLException {
@@ -276,44 +423,6 @@ public class DefaultSqlExecutor implements SqlExecutor {
             row.put(metaData.getColumnLabel(columnIndex), resultSet.getObject(columnIndex));
         }
         return row;
-    }
-
-    private boolean isSimpleResultType(Class<?> resultType) {
-        Class<?> normalized = wrap(resultType);
-        return normalized.isPrimitive()
-                || normalized == String.class
-                || normalized == Boolean.class
-                || normalized == Character.class
-                || Number.class.isAssignableFrom(normalized)
-                || normalized == BigDecimal.class
-                || normalized == BigInteger.class
-                || normalized == LocalDate.class
-                || normalized == LocalDateTime.class
-                || normalized == LocalTime.class
-                || normalized == Instant.class
-                || normalized == OffsetDateTime.class
-                || normalized == OffsetTime.class
-                || normalized == ZonedDateTime.class
-                || normalized == Object.class
-                || normalized.isEnum()
-                || normalized == byte[].class;
-    }
-
-    private Class<?> wrap(Class<?> type) {
-        if (!type.isPrimitive()) {
-            return type;
-        }
-        return switch (type.getName()) {
-            case "boolean" -> Boolean.class;
-            case "byte" -> Byte.class;
-            case "short" -> Short.class;
-            case "int" -> Integer.class;
-            case "long" -> Long.class;
-            case "float" -> Float.class;
-            case "double" -> Double.class;
-            case "char" -> Character.class;
-            default -> type;
-        };
     }
 
     private SqlRequest applyInterceptors(SqlExecutionContext context, SqlRequest originalRequest) {
@@ -332,13 +441,17 @@ public class DefaultSqlExecutor implements SqlExecutor {
         return current;
     }
 
-    private void bindParameters(PreparedStatement statement, Object[] args) throws SQLException {
-        if (args == null) {
-            return;
+    private Object[] bindParameters(PreparedStatement statement, Object[] args) throws SQLException {
+        if (args == null || args.length == 0) {
+            return new Object[0];
         }
+        Object[] boundArgs = new Object[args.length];
         for (int i = 0; i < args.length; i++) {
-            statement.setObject(i + 1, typeConverter.fieldToColumn(args[i]));
+            Object boundValue = typeConverter.fieldToColumn(args[i]);
+            boundArgs[i] = boundValue;
+            statement.setObject(i + 1, boundValue);
         }
+        return boundArgs;
     }
 
     private DbType inferDbType(Connection connection) {

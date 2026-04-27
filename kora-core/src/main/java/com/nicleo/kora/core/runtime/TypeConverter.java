@@ -2,6 +2,7 @@ package com.nicleo.kora.core.runtime;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.sql.Date;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Time;
@@ -15,20 +16,28 @@ import java.time.OffsetTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
-import java.util.List;
+import java.util.Arrays;
 import java.util.UUID;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 public final class TypeConverter {
-    private final List<CustomTypeConverter> customConverters = new CopyOnWriteArrayList<>();
+
+    private CustomTypeConverter[] customConverters = null;
 
     public TypeConverter register(CustomTypeConverter converter) {
-        customConverters.add(converter);
+        if (converter == null) {
+            return this;
+        }
+        if (customConverters == null) {
+            customConverters = new CustomTypeConverter[]{converter};
+            return this;
+        }
+        customConverters = Arrays.copyOf(customConverters, customConverters.length + 1);
+        customConverters[customConverters.length - 1] = converter;
         return this;
     }
 
     public void clearCustomConverters() {
-        customConverters.clear();
+        customConverters = null;
     }
 
     public <T> T cast(ResultSet resultSet, int index, Class<T> targetType) throws SQLException {
@@ -45,9 +54,14 @@ public final class TypeConverter {
         }
     }
 
-
     public Object fieldToColumn(Object value) {
-        var sourceType = value.getClass();
+        if (value == null) {
+            return null;
+        }
+        if (customConverters == null || customConverters.length == 0) {
+            return value;
+        }
+        Class<?> sourceType = value.getClass();
         for (CustomTypeConverter converter : customConverters) {
             if (converter.supports(sourceType)) {
                 return converter.fieldToColumn(value);
@@ -56,15 +70,17 @@ public final class TypeConverter {
         return value;
     }
 
+    @SuppressWarnings("unchecked")
     private <T> T doCast(ResultSet resultSet, int index, Class<T> targetType) throws SQLException {
-        for (CustomTypeConverter converter : customConverters) {
-            if (converter.supports(targetType)) {
-                return converter.columnToField(resultSet, index, targetType);
+        if (customConverters != null) {
+            for (CustomTypeConverter converter : customConverters) {
+                if (converter.supports(targetType)) {
+                    return converter.columnToField(resultSet, index, targetType);
+                }
             }
         }
         return resultSet.getObject(index, targetType);
     }
-
     private SqlExecutorException conversionFailure(Object value, Class<?> targetType, String columnName, String fieldName, RuntimeException cause) {
         String sourceType = value == null ? "null" : value.getClass().getName();
         StringBuilder message = new StringBuilder("Failed to convert result");

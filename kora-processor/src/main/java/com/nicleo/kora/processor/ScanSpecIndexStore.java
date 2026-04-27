@@ -51,6 +51,10 @@ final class ScanSpecIndexStore {
                 writer.write(String.join(",", item.entityPackages()));
                 writer.write('|');
                 writer.write(String.join(",", item.mapperPackages()));
+                writer.write('|');
+                writer.write(String.join(",", item.entityTypeNames()));
+                writer.write('|');
+                writer.write(String.join(",", item.mapperTypeNames()));
                 writer.write('\n');
             }
         }
@@ -61,13 +65,15 @@ final class ScanSpecIndexStore {
             return null;
         }
         String[] parts = line.split("\\|", -1);
-        if (parts.length != 3) {
+        if (parts.length != 3 && parts.length != 5) {
             return null;
         }
         return new ScanConfigMetadata(
                 parts[0].trim(),
                 splitPackages(parts[1]),
-                splitPackages(parts[2])
+                splitPackages(parts[2]),
+                parts.length >= 5 ? splitPackages(parts[3]) : List.of(),
+                parts.length >= 5 ? splitPackages(parts[4]) : List.of()
         );
     }
 
@@ -82,6 +88,12 @@ final class ScanSpecIndexStore {
                 .toList();
     }
 
-    record ScanConfigMetadata(String configQualifiedName, List<String> entityPackages, List<String> mapperPackages) {
+    record ScanConfigMetadata(
+            String configQualifiedName,
+            List<String> entityPackages,
+            List<String> mapperPackages,
+            List<String> entityTypeNames,
+            List<String> mapperTypeNames
+    ) {
     }
 }
