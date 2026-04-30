@@ -9,4 +9,8 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 public @interface TestMapperTag {
     String value();
+
+    int order() default 7;
+
+    boolean enabled() default true;
 }

@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 class GeneratedMapperMethodAnnotationTest {
@@ -38,6 +39,28 @@ class GeneratedMapperMethodAnnotationTest {
         assertNotNull(annotation);
         assertEquals(TestMapperTag.class.getName(), annotation.type());
         assertEquals("selectById", annotation.value("value"));
+        assertEquals(7, annotation.value("order"));
+        assertEquals(true, annotation.value("enabled"));
+    }
+
+    @Test
+    void generatedMapperMethodShouldCopyRuntimeAnnotationsFromInterfaceMethod() throws Exception {
+        java.lang.reflect.Method method = Class.forName("com.example.simple.mapper.UserMapperImpl")
+                .getMethod("selectById", Long.class);
+
+        TestMapperTag annotation = method.getAnnotation(TestMapperTag.class);
+
+        assertNotNull(annotation);
+        assertEquals("selectById", annotation.value());
+        assertEquals(7, annotation.order());
+        assertEquals(true, annotation.enabled());
+    }
+
+    @Test
+    void generatedMapperImplShouldNotBeFinal() throws Exception {
+        Class<?> mapperImpl = Class.forName("com.example.simple.mapper.UserMapperImpl");
+
+        assertFalse(java.lang.reflect.Modifier.isFinal(mapperImpl.getModifiers()));
     }
 
     static final class CapturingSqlExecutor implements SqlExecutor {

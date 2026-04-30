@@ -11,6 +11,7 @@ import com.nicleo.kora.core.dynamic.TrimSqlNode;
 import com.nicleo.kora.core.dynamic.WhenSqlNode;
 import com.nicleo.kora.core.xml.SqlCommandType;
 import com.nicleo.kora.core.xml.SqlNodeDefinition;
+import org.objectweb.asm.AnnotationVisitor;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -55,7 +56,7 @@ final class MapperImplClassGenerator {
         String supportInternalName = AsmUtils.internalName(supportClassName);
 
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
-        cw.visit(Opcodes.V21, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, classInternalName, null, "java/lang/Object", new String[]{mapperInternalName});
+        cw.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, classInternalName, null, "java/lang/Object", new String[]{mapperInternalName});
 
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "sqlExecutor", SQL_EXECUTOR_DESC, null, null).visitEnd();
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "NO_ANNOTATIONS", "[" + ANNOTATION_META_DESC, null, null).visitEnd();
@@ -169,6 +170,7 @@ final class MapperImplClassGenerator {
         String methodDescriptor = AsmUtils.methodDescriptor(context.types().erasure(method.getReturnType()),
                 parameters.stream().map(parameter -> context.types().erasure(parameter.asType())).toList(), context.types());
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, method.getSimpleName().toString(), methodDescriptor, null, null);
+        emitMethodAnnotations(mv, method.getAnnotationMirrors());
         mv.visitCode();
 
         pushParameterValuesArray(mv, classInternalName, parameters);
@@ -335,6 +337,64 @@ final class MapperImplClassGenerator {
         return context.statementFieldName(statementId) + "_PARAMETER_NAMES";
     }
 
+    private void emitMethodAnnotations(MethodVisitor mv, List<? extends AnnotationMirror> annotations) {
+        for (AnnotationMirror annotationMirror : annotations) {
+            RetentionPolicy retentionPolicy = retentionPolicy(annotationMirror);
+            if (retentionPolicy == RetentionPolicy.SOURCE) {
+                continue;
+            }
+            TypeElement annotationType = (TypeElement) annotationMirror.getAnnotationType().asElement();
+            AnnotationVisitor av = mv.visitAnnotation(AsmUtils.descriptor(annotationType.asType(), context.types()),
+                    retentionPolicy == RetentionPolicy.RUNTIME);
+            emitAnnotationValues(av, annotationMirror);
+            av.visitEnd();
+        }
+    }
+
+    private void emitAnnotationValues(AnnotationVisitor av, AnnotationMirror annotationMirror) {
+        for (java.util.Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> entry : annotationMirror.getElementValues().entrySet()) {
+            emitAnnotationVisitValue(av, entry.getKey().getSimpleName().toString(), entry.getValue(), entry.getKey().getReturnType());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void emitAnnotationVisitValue(AnnotationVisitor av, String name, AnnotationValue value, TypeMirror expectedType) {
+        Object raw = value.getValue();
+        if (expectedType instanceof ArrayType arrayType) {
+            AnnotationVisitor arrayVisitor = av.visitArray(name);
+            for (AnnotationValue arrayValue : (List<? extends AnnotationValue>) raw) {
+                emitAnnotationVisitValue(arrayVisitor, null, arrayValue, arrayType.getComponentType());
+            }
+            arrayVisitor.visitEnd();
+            return;
+        }
+        switch (expectedType.getKind()) {
+            case BOOLEAN, BYTE, SHORT, INT, LONG, CHAR, FLOAT, DOUBLE -> av.visit(name, raw);
+            case DECLARED -> emitDeclaredAnnotationVisitValue(av, name, raw, expectedType);
+            default -> av.visit(name, raw);
+        }
+    }
+
+    private void emitDeclaredAnnotationVisitValue(AnnotationVisitor av, String name, Object raw, TypeMirror expectedType) {
+        if (raw instanceof TypeMirror typeMirror) {
+            av.visit(name, org.objectweb.asm.Type.getType(AsmUtils.descriptor(typeMirror, context.types())));
+            return;
+        }
+        if (raw instanceof VariableElement enumConstant) {
+            TypeElement owner = (TypeElement) enumConstant.getEnclosingElement();
+            av.visitEnum(name, AsmUtils.descriptor(owner.asType(), context.types()), enumConstant.getSimpleName().toString());
+            return;
+        }
+        if (raw instanceof AnnotationMirror annotationMirror) {
+            TypeElement annotationType = (TypeElement) annotationMirror.getAnnotationType().asElement();
+            AnnotationVisitor nested = av.visitAnnotation(name, AsmUtils.descriptor(annotationType.asType(), context.types()));
+            emitAnnotationValues(nested, annotationMirror);
+            nested.visitEnd();
+            return;
+        }
+        av.visit(name, raw);
+    }
+
     private void emitMethodAnnotationArray(MethodVisitor mv, List<? extends AnnotationMirror> annotations, String classInternalName) {
         List<? extends AnnotationMirror> includedAnnotations = annotations.stream()
                 .filter(this::isRuntimeVisibleAnnotation)
@@ -393,14 +453,7 @@ final class MapperImplClassGenerator {
     private void emitAnnotationValueObject(MethodVisitor mv, AnnotationValue value, TypeMirror expectedType, String classInternalName) {
         Object raw = value.getValue();
         switch (expectedType.getKind()) {
-            case BOOLEAN -> mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Boolean", "valueOf", "(Z)Ljava/lang/Boolean;", false);
-            case BYTE -> mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Byte", "valueOf", "(B)Ljava/lang/Byte;", false);
-            case SHORT -> mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Short", "valueOf", "(S)Ljava/lang/Short;", false);
-            case INT -> mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Integer", "valueOf", "(I)Ljava/lang/Integer;", false);
-            case LONG -> mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Long", "valueOf", "(J)Ljava/lang/Long;", false);
-            case CHAR -> mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Character", "valueOf", "(C)Ljava/lang/Character;", false);
-            case FLOAT -> mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Float", "valueOf", "(F)Ljava/lang/Float;", false);
-            case DOUBLE -> mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Double", "valueOf", "(D)Ljava/lang/Double;", false);
+            case BOOLEAN, BYTE, SHORT, INT, LONG, CHAR, FLOAT, DOUBLE -> emitObjectLiteral(mv, raw);
             case ARRAY -> emitAnnotationArrayValue(mv, (List<? extends AnnotationValue>) raw, (ArrayType) expectedType, classInternalName);
             default -> emitDeclaredAnnotationValue(mv, raw, classInternalName);
         }
@@ -444,9 +497,13 @@ final class MapperImplClassGenerator {
     }
 
     private boolean isRuntimeVisibleAnnotation(AnnotationMirror annotationMirror) {
+        return retentionPolicy(annotationMirror) == RetentionPolicy.RUNTIME;
+    }
+
+    private RetentionPolicy retentionPolicy(AnnotationMirror annotationMirror) {
         Element element = annotationMirror.getAnnotationType().asElement();
         if (!(element instanceof TypeElement annotationType)) {
-            return false;
+            return RetentionPolicy.CLASS;
         }
         for (AnnotationMirror meta : annotationType.getAnnotationMirrors()) {
             if (!meta.getAnnotationType().toString().equals("java.lang.annotation.Retention")) {
@@ -455,11 +512,11 @@ final class MapperImplClassGenerator {
             for (AnnotationValue value : meta.getElementValues().values()) {
                 Object raw = value.getValue();
                 if (raw instanceof VariableElement retentionValue) {
-                    return retentionValue.getSimpleName().contentEquals(RetentionPolicy.RUNTIME.name());
+                    return RetentionPolicy.valueOf(retentionValue.getSimpleName().toString());
                 }
             }
         }
-        return false;
+        return RetentionPolicy.CLASS;
     }
 
     private AnnotationValue annotationValue(AnnotationMirror annotationMirror, ExecutableElement method) {
