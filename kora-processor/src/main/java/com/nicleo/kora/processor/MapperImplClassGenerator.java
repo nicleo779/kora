@@ -183,11 +183,11 @@ final class MapperImplClassGenerator {
         mv.visitLdcInsn(mapperType.getQualifiedName().toString());
         mv.visitLdcInsn(statement.id());
         mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, methodAnnotationsFieldName(statement.id()), "[" + ANNOTATION_META_DESC);
-        mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, context.statementFieldName(statement.id()), DYNAMIC_SQL_NODE_DESC);
-        mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, methodParameterNamesFieldName(statement.id()), "[Ljava/lang/String;");
-        mv.visitVarInsn(Opcodes.ALOAD, valuesLocal);
 
         if (statement.commandType() == SqlCommandType.SELECT) {
+            mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, context.statementFieldName(statement.id()), DYNAMIC_SQL_NODE_DESC);
+            mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, methodParameterNamesFieldName(statement.id()), "[Ljava/lang/String;");
+            mv.visitVarInsn(Opcodes.ALOAD, valuesLocal);
             if (context.isPageReturn(method.getReturnType())) {
                 int pagingIndex = pagingParameterIndex(parameters);
                 mv.visitVarInsn(Opcodes.ALOAD, pagingIndex);
@@ -216,6 +216,9 @@ final class MapperImplClassGenerator {
             }
         } else {
             mv.visitFieldInsn(Opcodes.GETSTATIC, "com/nicleo/kora/core/xml/SqlCommandType", statement.commandType().name(), "Lcom/nicleo/kora/core/xml/SqlCommandType;");
+            mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, context.statementFieldName(statement.id()), DYNAMIC_SQL_NODE_DESC);
+            mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, methodParameterNamesFieldName(statement.id()), "[Ljava/lang/String;");
+            mv.visitVarInsn(Opcodes.ALOAD, valuesLocal);
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, GENERATED_MAPPER_SUPPORT, "update",
                     "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;[" + ANNOTATION_META_DESC + "Lcom/nicleo/kora/core/xml/SqlCommandType;" + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;)I", false);
             if (method.getReturnType().getKind() == TypeKind.INT) {

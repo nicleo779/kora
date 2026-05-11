@@ -12,7 +12,7 @@ import java.util.List;
 public interface BaseMapper<T> {
     T selectById(Serializable id);
 
-    List<T> selectByIds(Collection<Serializable> ids);
+    List<T> selectByIds(Collection<? extends Serializable> ids);
 
     List<T> selectList(WhereWrapper query);
 
@@ -36,5 +36,5 @@ public interface BaseMapper<T> {
 
     int deleteById(Serializable id);
 
-    int deleteByIds(Collection<Serializable> ids);
+    int deleteByIds(Collection<? extends Serializable> ids);
 }

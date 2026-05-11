@@ -13,6 +13,7 @@ import com.nicleo.kora.core.runtime.SqlPagingSupport;
 import com.nicleo.kora.core.runtime.TypeConverter;
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -61,6 +62,19 @@ class GeneratedMapperMethodAnnotationTest {
         Class<?> mapperImpl = Class.forName("com.example.simple.mapper.UserMapperImpl");
 
         assertFalse(java.lang.reflect.Modifier.isFinal(mapperImpl.getModifiers()));
+    }
+
+    @Test
+    void generatedUpdateMapperMethodShouldUseValidOperandStackOrder() throws Exception {
+        CapturingSqlExecutor sqlExecutor = new CapturingSqlExecutor();
+        UserMapper mapper = (UserMapper) Class.forName("com.example.simple.mapper.UserMapperImpl")
+                .getConstructor(SqlExecutor.class)
+                .newInstance(sqlExecutor);
+
+        int rows = mapper.expireUsers(LocalDateTime.of(2026, 5, 11, 15, 44));
+
+        assertEquals(1, rows);
+        assertEquals(com.nicleo.kora.core.xml.SqlCommandType.UPDATE, sqlExecutor.capturedContext.getCommandType());
     }
 
     static final class CapturingSqlExecutor implements SqlExecutor {
@@ -125,7 +139,8 @@ class GeneratedMapperMethodAnnotationTest {
 
         @Override
         public int update(String sql, Object[] args, SqlExecutionContext context) {
-            throw new UnsupportedOperationException();
+            this.capturedContext = context;
+            return 1;
         }
 
         @Override

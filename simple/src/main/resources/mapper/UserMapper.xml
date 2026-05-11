@@ -103,4 +103,10 @@
         order by id
     </select>
 
+    <update id="expireUsers">
+        update users
+        set name = 'expired'
+        where created_time <![CDATA[<=]]> #{now}
+    </update>
+
 </mapper>

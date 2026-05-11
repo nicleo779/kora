@@ -11,6 +11,7 @@ import com.nicleo.kora.core.query.Page;
 import com.nicleo.kora.core.query.Paging;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -37,4 +38,6 @@ public interface UserMapper extends ReadMapper<User>, WriteMapper<User> {
     List<Map<String, Object>> selectUserMaps();
 
     Page<User> selectPage(Paging paging, Integer minAge, Integer maxAge);
+
+    int expireUsers(LocalDateTime now);
 }

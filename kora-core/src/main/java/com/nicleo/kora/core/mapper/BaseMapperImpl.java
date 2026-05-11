@@ -55,7 +55,7 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
     }
 
     @Override
-    public List<T> selectByIds(Collection<Serializable> ids) {
+    public List<T> selectByIds(Collection<? extends Serializable> ids) {
         if (ids == null || ids.isEmpty()) {
             return List.of();
         }
@@ -219,7 +219,7 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
     }
 
     @Override
-    public int deleteByIds(Collection<Serializable> ids) {
+    public int deleteByIds(Collection<? extends Serializable> ids) {
         if (ids == null || ids.isEmpty()) {
             return 0;
         }
