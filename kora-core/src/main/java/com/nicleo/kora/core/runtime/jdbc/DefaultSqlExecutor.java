@@ -37,6 +37,7 @@ import java.util.stream.Collectors;
 
 public class DefaultSqlExecutor implements SqlExecutor {
     private static final Logger logger = LoggerFactory.getLogger(DefaultSqlExecutor.class);
+    private static final int MAX_LOGGED_BATCH_ARGS = 3;
 
     private final DataSource dataSource;
     private TypeConverter typeConverter;
@@ -307,6 +308,7 @@ public class DefaultSqlExecutor implements SqlExecutor {
 
     private String formatExecutableBatchSql(String sql, List<Object[]> batchArgs) {
         return batchArgs.stream()
+                .limit(MAX_LOGGED_BATCH_ARGS)
                 .map(args -> formatExecutableSql(sql, args))
                 .collect(Collectors.joining("; "));
     }
