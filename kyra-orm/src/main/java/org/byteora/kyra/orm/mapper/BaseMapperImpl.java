@@ -41,6 +41,15 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
      */
     private static final Map<InsertSqlKey, String> INSERT_SQL_CACHE = new ConcurrentHashMap<>();
 
+    /**
+     * Caches the rendered {@code update ... where id = ?} SQL per (entity type, dialect, ordered
+     * column set). Mirrors {@link #INSERT_SQL_CACHE}: placeholders are positional and the where
+     * clause is always a single id equality, so the statement depends only on the non-null column
+     * set. On a cache hit the per-field {@code UpdateAssignment}/{@code LiteralExpression} wrappers
+     * are skipped entirely.
+     */
+    private static final Map<UpdateSqlKey, String> UPDATE_BY_ID_SQL_CACHE = new ConcurrentHashMap<>();
+
     protected final EntityTable<T> entityTable;
 
     public BaseMapperImpl(SqlExecutor sqlExecutor, Class<T> entityClass) {
@@ -314,7 +323,8 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
         if (idValue == null) {
             throw new SqlExecutorException("Update by id requires non-null id field: " + entityClass.getName());
         }
-        List<UpdateAssignment> updateAssignments = new ArrayList<>();
+        List<String> columns = new ArrayList<>();
+        List<Object> args = new ArrayList<>();
         for (int fieldIndex = 0; fieldIndex < fields.length; fieldIndex++) {
             if (fieldIndex == idFieldIndex) {
                 continue;
@@ -324,23 +334,42 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
             if (value == null) {
                 continue;
             }
-            updateAssignments.add(new UpdateAssignment(
-                    entityTable.columnRef(entityTable.columnName(field)),
-                    Expressions.literal(value)
-            ));
+            columns.add(entityTable.columnName(field));
+            args.add(value);
         }
-        if (updateAssignments.isEmpty()) {
+        if (columns.isEmpty()) {
             return null;
         }
-        SqlRequest request = sqlExecutor.getSqlGenerator().renderUpdate(
+        args.add(idValue);
+        DbType dbType = sqlExecutor.getDbType();
+        String sql = UPDATE_BY_ID_SQL_CACHE.computeIfAbsent(
+                new UpdateSqlKey(entityClass, dbType, columns),
+                key -> renderUpdateByIdSql(key.columns(), idValue, dbType)
+        );
+        return new UpdateByIdSpec(sql, args.toArray());
+    }
+
+    /**
+     * Renders the {@code update ... where id = ?} statement for a given column set. Only invoked on
+     * a cache miss; the literal id value is used solely to build the where condition for rendering
+     * and never affects the emitted SQL (the clause renders to a positional placeholder).
+     */
+    private String renderUpdateByIdSql(List<String> columns, Object idValue, DbType dbType) {
+        List<UpdateAssignment> updateAssignments = new ArrayList<>(columns.size());
+        for (String column : columns) {
+            updateAssignments.add(new UpdateAssignment(
+                    entityTable.columnRef(column),
+                    Expressions.literal(null)
+            ));
+        }
+        return sqlExecutor.getSqlGenerator().renderUpdate(
                 entityTable,
                 new UpdateDefinition(
                         updateAssignments,
                         new WhereDefinition(Conditions.eq(entityTable.idColumn(), idValue), List.of(), null, null)
                 ),
-                sqlExecutor.getDbType()
-        );
-        return new UpdateByIdSpec(request.sql(), request.args());
+                dbType
+        ).sql();
     }
 
     private int executeGroupedBatch(Map<String, List<Object[]>> batchGroups) {
@@ -364,5 +393,13 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
      * to retain as a key without defensive copying.
      */
     private record InsertSqlKey(Class<?> entityType, DbType dbType, List<String> columns) {
+    }
+
+    /**
+     * Cache key for rendered {@code update ... where id = ?} SQL. {@code columns} participates in
+     * equality by value (an ordered {@link List}); it is built fresh per call and never mutated
+     * afterwards, so it is safe to retain as a key without defensive copying.
+     */
+    private record UpdateSqlKey(Class<?> entityType, DbType dbType, List<String> columns) {
     }
 }

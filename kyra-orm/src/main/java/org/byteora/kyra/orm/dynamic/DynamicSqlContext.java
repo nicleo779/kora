@@ -17,12 +17,16 @@ public final class DynamicSqlContext {
      */
     private static final Map<String, String[]> PATH_CACHE = new ConcurrentHashMap<>();
 
-    private final Map<String, Object> bindings;
+    private Map<String, Object> bindings;
+    private boolean ownsBindings;
     private final Deque<Scope> scopes = new ArrayDeque<>();
     private int uniqueNumber;
 
     public DynamicSqlContext(Map<String, Object> bindings) {
-        this.bindings = new LinkedHashMap<>(bindings);
+        // Share the caller's (freshly built, read-only) parameter map and only copy on first
+        // mutation. Statements without <foreach>/<bind> never mutate, so they avoid the copy.
+        this.bindings = bindings;
+        this.ownsBindings = false;
     }
 
     public Map<String, Object> getBindings() {
@@ -81,6 +85,10 @@ public final class DynamicSqlContext {
     }
 
     public void bind(String name, Object value) {
+        if (!ownsBindings) {
+            bindings = new LinkedHashMap<>(bindings);
+            ownsBindings = true;
+        }
         bindings.put(name, value);
         if (!scopes.isEmpty()) {
             scopes.peek().values.put(name, value);
