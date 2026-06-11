@@ -13,17 +13,11 @@ class SqlExecutionContextTest {
         AnnotationMeta[] annotations = {
                 new AnnotationMeta(TestTag.class.getName(), java.util.Map.of("value", "direct", "order", 1))
         };
-        SqlExecutionContext context = new SqlExecutionContext(
-                null,
-                "com.example.Mapper",
-                "selectById",
-                SqlCommandType.SELECT,
-                String.class,
-                null,
-                null,
-                annotations,
-                true
-        );
+        SqlExecutionContext context = SqlExecutionContext.builder(SqlCommandType.SELECT)
+                .mapper(TestMapper.class, "selectById")
+                .resultType(String.class)
+                .annotations(annotations)
+                .build();
 
         AnnotationMeta annotation = context.getMapperMethodAnnotation(TestTag.class.getName());
         assertEquals("direct", annotation.value("value"));
@@ -33,17 +27,10 @@ class SqlExecutionContextTest {
 
     @Test
     void shouldReturnNullWhenAnnotationIsMissing() {
-        SqlExecutionContext context = new SqlExecutionContext(
-                null,
-                "com.example.Mapper",
-                "selectById",
-                SqlCommandType.SELECT,
-                String.class,
-                null,
-                null,
-                new AnnotationMeta[0],
-                true
-        );
+        SqlExecutionContext context = SqlExecutionContext.builder(SqlCommandType.SELECT)
+                .mapper(TestMapper.class, "selectById")
+                .resultType(String.class)
+                .build();
 
         assertNull(context.getMapperMethodAnnotation("com.example.TestTag"));
         assertNull(context.getMapperMethodAnnotation(TestTag.class));
@@ -51,5 +38,8 @@ class SqlExecutionContextTest {
     }
 
     @interface TestTag {
+    }
+
+    interface TestMapper {
     }
 }

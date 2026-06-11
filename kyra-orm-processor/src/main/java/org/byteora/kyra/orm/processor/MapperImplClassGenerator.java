@@ -33,6 +33,7 @@ import java.util.List;
 
 final class MapperImplClassGenerator {
     private static final String SQL_EXECUTOR_DESC = "Lorg/byteora/kyra/orm/runtime/SqlExecutor;";
+    private static final String MAPPER_TYPE_DESC = "Ljava/lang/Class;";
     private static final String DYNAMIC_SQL_NODE_DESC = "Lorg/byteora/kyra/orm/dynamic/DynamicSqlNode;";
     private static final String ANNOTATION_META = "org/byteora/kyra/core/runtime/AnnotationMeta";
     private static final String ANNOTATION_META_DESC = "Lorg/byteora/kyra/core/runtime/AnnotationMeta;";
@@ -169,7 +170,7 @@ final class MapperImplClassGenerator {
 
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, classInternalName, "sqlExecutor", SQL_EXECUTOR_DESC);
-        mv.visitLdcInsn(mapperType.getQualifiedName().toString());
+        AsmUtils.pushTypeLiteral(mv, mapperType.asType(), context.types());
         mv.visitLdcInsn(statement.id());
         mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, methodAnnotationsFieldName(statement.id()), "[" + ANNOTATION_META_DESC);
 
@@ -182,17 +183,17 @@ final class MapperImplClassGenerator {
                 mv.visitVarInsn(Opcodes.ALOAD, pagingIndex);
                 AsmUtils.pushTypeLiteral(mv, context.extractPageElementType(method.getReturnType()), context.types());
                 mv.visitMethodInsn(Opcodes.INVOKESTATIC, GENERATED_MAPPER_SUPPORT, "selectPage",
-                        "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;[" + ANNOTATION_META_DESC + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;Lorg/byteora/kyra/orm/query/Paging;" + TYPE_DESC + ")Lorg/byteora/kyra/orm/query/Page;", false);
+                        "(" + SQL_EXECUTOR_DESC + MAPPER_TYPE_DESC + "Ljava/lang/String;[" + ANNOTATION_META_DESC + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;Lorg/byteora/kyra/orm/query/Paging;" + TYPE_DESC + ")Lorg/byteora/kyra/orm/query/Page;", false);
                 mv.visitInsn(Opcodes.ARETURN);
             } else if (context.isListReturn(method.getReturnType())) {
                 AsmUtils.pushTypeLiteral(mv, context.extractListElementType(method.getReturnType()), context.types());
                 mv.visitMethodInsn(Opcodes.INVOKESTATIC, GENERATED_MAPPER_SUPPORT, "selectList",
-                        "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;[" + ANNOTATION_META_DESC + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;" + TYPE_DESC + ")Ljava/util/List;", false);
+                        "(" + SQL_EXECUTOR_DESC + MAPPER_TYPE_DESC + "Ljava/lang/String;[" + ANNOTATION_META_DESC + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;" + TYPE_DESC + ")Ljava/util/List;", false);
                 mv.visitInsn(Opcodes.ARETURN);
             } else {
                 AsmUtils.pushTypeLiteral(mv, method.getReturnType(), context.types());
                 mv.visitMethodInsn(Opcodes.INVOKESTATIC, GENERATED_MAPPER_SUPPORT, "selectOne",
-                        "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;[" + ANNOTATION_META_DESC + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;" + TYPE_DESC + ")Ljava/lang/Object;", false);
+                        "(" + SQL_EXECUTOR_DESC + MAPPER_TYPE_DESC + "Ljava/lang/String;[" + ANNOTATION_META_DESC + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;" + TYPE_DESC + ")Ljava/lang/Object;", false);
                 TypeKind returnKind = context.types().erasure(method.getReturnType()).getKind();
                 if (returnKind != TypeKind.VOID) {
                     if (returnKind.isPrimitive()) {
@@ -209,7 +210,7 @@ final class MapperImplClassGenerator {
             mv.visitFieldInsn(Opcodes.GETSTATIC, classInternalName, methodParameterNamesFieldName(statement.id()), "[Ljava/lang/String;");
             mv.visitVarInsn(Opcodes.ALOAD, valuesLocal);
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, GENERATED_MAPPER_SUPPORT, "update",
-                    "(" + SQL_EXECUTOR_DESC + "Ljava/lang/String;Ljava/lang/String;[" + ANNOTATION_META_DESC + "Lorg/byteora/kyra/orm/xml/SqlCommandType;" + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;)I", false);
+                    "(" + SQL_EXECUTOR_DESC + MAPPER_TYPE_DESC + "Ljava/lang/String;[" + ANNOTATION_META_DESC + "Lorg/byteora/kyra/orm/xml/SqlCommandType;" + DYNAMIC_SQL_NODE_DESC + "[Ljava/lang/String;[Ljava/lang/Object;)I", false);
             if (method.getReturnType().getKind() == TypeKind.INT) {
                 mv.visitInsn(Opcodes.IRETURN);
             } else {

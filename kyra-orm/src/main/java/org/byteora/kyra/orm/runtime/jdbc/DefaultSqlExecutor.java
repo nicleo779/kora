@@ -161,15 +161,16 @@ public class DefaultSqlExecutor implements SqlExecutor {
     @Override
     public int update(String sql, Object[] args, SqlExecutionContext context) {
         SqlRequest request = applyInterceptors(context, new SqlRequest(sql, args));
+        Object[] requestArgs = request.args();
         try (var connection = openConnection()) {
             try (PreparedStatement statement = connection.prepareStatement(request.sql())) {
-                bindParameters(statement, request.args());
+                bindParameters(statement, requestArgs);
                 int updated = statement.executeUpdate();
-                logSqlSuccess(context, request.sql(), request.args(), null, updated);
+                logSqlSuccess(context, request.sql(), requestArgs, null, updated);
                 return updated;
             }
         } catch (SQLException ex) {
-            logSqlError(context, request.sql(), request.args(), null, ex);
+            logSqlError(context, request.sql(), requestArgs, null, ex);
             throw new SqlExecutorException("Failed to execute update: " + request.sql(), ex);
         }
     }
@@ -181,11 +182,12 @@ public class DefaultSqlExecutor implements SqlExecutor {
 
     public <T> T updateAndReturnGeneratedKey(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
         SqlRequest request = applyInterceptors(context, new SqlRequest(sql, args));
+        Object[] requestArgs = request.args();
         try (var connection = openConnection()) {
             try (PreparedStatement statement = connection.prepareStatement(request.sql(), Statement.RETURN_GENERATED_KEYS)) {
-                bindParameters(statement, request.args());
+                bindParameters(statement, requestArgs);
                 int updated = statement.executeUpdate();
-                logSqlSuccess(context, request.sql(), request.args(), null, updated);
+                logSqlSuccess(context, request.sql(), requestArgs, null, updated);
                 if (updated < 1) {
                     return null;
                 }
@@ -197,7 +199,7 @@ public class DefaultSqlExecutor implements SqlExecutor {
             }
             return null;
         } catch (SQLException ex) {
-            logSqlError(context, request.sql(), request.args(), null, ex);
+            logSqlError(context, request.sql(), requestArgs, null, ex);
             throw new SqlExecutorException("Failed to execute update with generated key: " + request.sql(), ex);
         }
     }
@@ -426,6 +428,9 @@ public class DefaultSqlExecutor implements SqlExecutor {
     }
 
     private SqlRequest applyInterceptors(SqlExecutionContext context, SqlRequest originalRequest) {
+        if (interceptors.isEmpty()) {
+            return originalRequest;
+        }
         SqlExecutionContext effectiveContext = context == null ? SqlExecutionContext.update(this) : context.withSqlExecutor(this);
         if (!effectiveContext.isInterceptorEnabled()) {
             return originalRequest;
@@ -446,8 +451,7 @@ public class DefaultSqlExecutor implements SqlExecutor {
             return;
         }
         for (int i = 0; i < args.length; i++) {
-            args[i] = typeConverter.fieldToColumn(args[i]);
-            statement.setObject(i + 1, args[i]);
+            statement.setObject(i + 1, typeConverter.fieldToColumn(args[i]));
         }
     }
 

@@ -11,7 +11,7 @@ public final class SqlExecutionContext {
     private static final AnnotationMeta[] NO_ANNOTATIONS = new AnnotationMeta[0];
 
     private final SqlExecutor sqlExecutor;
-    private final String mapperClassName;
+    private final Class<?> mapperType;
     private final String statementId;
     private final SqlCommandType commandType;
     private final Class<?> resultType;
@@ -21,76 +21,64 @@ public final class SqlExecutionContext {
     private final AnnotationMeta[] mapperMethodAnnotations;
     private final boolean interceptorEnabled;
 
-    public SqlExecutionContext(SqlExecutor sqlExecutor, String mapperClassName, String statementId, SqlCommandType commandType, Class<?> resultType, boolean interceptorEnabled) {
-        this(sqlExecutor, mapperClassName, statementId, commandType, resultType, resultType, null, null, NO_ANNOTATIONS, interceptorEnabled);
-    }
-
-    public SqlExecutionContext(SqlExecutor sqlExecutor, String mapperClassName, String statementId, SqlCommandType commandType, Class<?> resultType, Paging paging, boolean interceptorEnabled) {
-        this(sqlExecutor, mapperClassName, statementId, commandType, resultType, resultType, paging, null, NO_ANNOTATIONS, interceptorEnabled);
-    }
-
-    public SqlExecutionContext(SqlExecutor sqlExecutor, String mapperClassName, String statementId, SqlCommandType commandType, Class<?> resultType, Paging paging, SqlRequest countRequest, boolean interceptorEnabled) {
-        this(sqlExecutor, mapperClassName, statementId, commandType, resultType, resultType, paging, countRequest, NO_ANNOTATIONS, interceptorEnabled);
-    }
-
-    public SqlExecutionContext(SqlExecutor sqlExecutor,
-                               String mapperClassName,
-                               String statementId,
-                               SqlCommandType commandType,
-                               Class<?> resultType,
-                               Paging paging,
-                               SqlRequest countRequest,
-                               AnnotationMeta[] mapperMethodAnnotations,
-                               boolean interceptorEnabled) {
-        this(sqlExecutor, mapperClassName, statementId, commandType, resultType, resultType, paging, countRequest, mapperMethodAnnotations, interceptorEnabled);
-    }
-
-    public SqlExecutionContext(SqlExecutor sqlExecutor,
-                               String mapperClassName,
-                               String statementId,
-                               SqlCommandType commandType,
-                               Class<?> resultType,
-                               Type genericResultType,
-                               Paging paging,
-                               SqlRequest countRequest,
-                               AnnotationMeta[] mapperMethodAnnotations,
-                               boolean interceptorEnabled) {
-        this.sqlExecutor = sqlExecutor;
-        this.mapperClassName = mapperClassName;
-        this.statementId = statementId;
-        this.commandType = Objects.requireNonNull(commandType, "commandType");
-        this.resultType = resultType;
-        this.genericResultType = genericResultType == null ? resultType : genericResultType;
-        this.paging = paging;
-        this.countRequest = countRequest;
-        this.mapperMethodAnnotations = mapperMethodAnnotations == null || mapperMethodAnnotations.length == 0
+    private SqlExecutionContext(Builder builder) {
+        this.sqlExecutor = builder.sqlExecutor;
+        this.mapperType = builder.mapperType;
+        this.statementId = builder.statementId;
+        this.commandType = builder.commandType;
+        this.resultType = builder.resultType;
+        this.genericResultType = builder.genericResultType == null ? builder.resultType : builder.genericResultType;
+        this.paging = builder.paging;
+        this.countRequest = builder.countRequest;
+        // The supplied array originates from generated mapper code and is treated as immutable, so it
+        // is referenced directly here; external reads are protected by cloning in the getter.
+        this.mapperMethodAnnotations = builder.mapperMethodAnnotations == null || builder.mapperMethodAnnotations.length == 0
                 ? NO_ANNOTATIONS
-                : mapperMethodAnnotations.clone();
-        this.interceptorEnabled = interceptorEnabled;
+                : builder.mapperMethodAnnotations;
+        this.interceptorEnabled = builder.interceptorEnabled;
+    }
+
+    public static Builder builder(SqlCommandType commandType) {
+        return new Builder(commandType);
     }
 
     public static SqlExecutionContext select(SqlExecutor sqlExecutor, Class<?> resultType) {
-        return new SqlExecutionContext(sqlExecutor, null, null, SqlCommandType.SELECT, resultType, null, null, NO_ANNOTATIONS, true);
+        return builder(SqlCommandType.SELECT).sqlExecutor(sqlExecutor).resultType(resultType).build();
     }
 
     public static SqlExecutionContext update(SqlExecutor sqlExecutor) {
-        return new SqlExecutionContext(sqlExecutor, null, null, SqlCommandType.UPDATE, null, null, null, NO_ANNOTATIONS, true);
+        return builder(SqlCommandType.UPDATE).sqlExecutor(sqlExecutor).build();
     }
 
     public SqlExecutionContext withSqlExecutor(SqlExecutor sqlExecutor) {
-        return new SqlExecutionContext(sqlExecutor, mapperClassName, statementId, commandType, resultType, genericResultType, paging, countRequest, mapperMethodAnnotations, interceptorEnabled);
+        return toBuilder().sqlExecutor(sqlExecutor).build();
     }
 
     public SqlExecutionContext withoutInterceptors() {
-        return new SqlExecutionContext(sqlExecutor, mapperClassName, statementId, commandType, resultType, genericResultType, paging, countRequest, mapperMethodAnnotations, false);
+        return toBuilder().interceptorEnabled(false).build();
+    }
+
+    private Builder toBuilder() {
+        return builder(commandType)
+                .sqlExecutor(sqlExecutor)
+                .mapper(mapperType, statementId)
+                .resultType(resultType, genericResultType)
+                .paging(paging)
+                .countRequest(countRequest)
+                .annotations(mapperMethodAnnotations)
+                .interceptorEnabled(interceptorEnabled);
     }
 
     public SqlExecutor getSqlExecutor() {
         return sqlExecutor;
     }
 
+    public Class<?> getMapperType() {
+        return mapperType;
+    }
+
     public String getMapperClassName() {
-        return mapperClassName;
+        return mapperType == null ? null : mapperType.getName();
     }
 
     public String getStatementId() {
@@ -122,7 +110,7 @@ public final class SqlExecutionContext {
     }
 
     public AnnotationMeta[] getMapperMethodAnnotations() {
-        return mapperMethodAnnotations.clone();
+        return mapperMethodAnnotations.length == 0 ? NO_ANNOTATIONS : mapperMethodAnnotations.clone();
     }
 
     public AnnotationMeta getMapperMethodAnnotation(String annotationType) {
@@ -140,5 +128,69 @@ public final class SqlExecutionContext {
     public AnnotationMeta getMapperMethodAnnotation(Class<?> annotationType) {
         Objects.requireNonNull(annotationType, "annotationType");
         return getMapperMethodAnnotation(annotationType.getName());
+    }
+
+    public static final class Builder {
+        private final SqlCommandType commandType;
+        private SqlExecutor sqlExecutor;
+        private Class<?> mapperType;
+        private String statementId;
+        private Class<?> resultType;
+        private Type genericResultType;
+        private Paging paging;
+        private SqlRequest countRequest;
+        private AnnotationMeta[] mapperMethodAnnotations = NO_ANNOTATIONS;
+        private boolean interceptorEnabled = true;
+
+        private Builder(SqlCommandType commandType) {
+            this.commandType = Objects.requireNonNull(commandType, "commandType");
+        }
+
+        public Builder sqlExecutor(SqlExecutor sqlExecutor) {
+            this.sqlExecutor = sqlExecutor;
+            return this;
+        }
+
+        public Builder mapper(Class<?> mapperType, String statementId) {
+            this.mapperType = mapperType;
+            this.statementId = statementId;
+            return this;
+        }
+
+        public Builder resultType(Class<?> resultType) {
+            this.resultType = resultType;
+            this.genericResultType = resultType;
+            return this;
+        }
+
+        public Builder resultType(Class<?> resultType, Type genericResultType) {
+            this.resultType = resultType;
+            this.genericResultType = genericResultType;
+            return this;
+        }
+
+        public Builder paging(Paging paging) {
+            this.paging = paging;
+            return this;
+        }
+
+        public Builder countRequest(SqlRequest countRequest) {
+            this.countRequest = countRequest;
+            return this;
+        }
+
+        public Builder annotations(AnnotationMeta[] mapperMethodAnnotations) {
+            this.mapperMethodAnnotations = mapperMethodAnnotations;
+            return this;
+        }
+
+        public Builder interceptorEnabled(boolean interceptorEnabled) {
+            this.interceptorEnabled = interceptorEnabled;
+            return this;
+        }
+
+        public SqlExecutionContext build() {
+            return new SqlExecutionContext(this);
+        }
     }
 }

@@ -184,16 +184,12 @@ public final class QueryWrapper {
         QueryDefinition definition = toDefinition();
         SqlRequest request = sqlExecutor.getSqlGenerator().renderQuery(definition, sqlExecutor.getDbType());
         SqlRequest countRequest = sqlExecutor.getSqlGenerator().rewriteCount(definition, sqlExecutor.getDbType());
-        SqlExecutionContext context = new SqlExecutionContext(
-                sqlExecutor,
-                QueryWrapper.class.getName(),
-                "count",
-                SqlCommandType.SELECT,
-                Long.class,
-                null,
-                countRequest,
-                true
-        );
+        SqlExecutionContext context = SqlExecutionContext.builder(SqlCommandType.SELECT)
+                .sqlExecutor(sqlExecutor)
+                .mapper(QueryWrapper.class, "count")
+                .resultType(Long.class)
+                .countRequest(countRequest)
+                .build();
         return sqlExecutor.getSqlPagingSupport().count(sqlExecutor, context, request.sql(), request.args());
     }
 
@@ -202,16 +198,13 @@ public final class QueryWrapper {
         QueryDefinition definition = toDefinition();
         SqlRequest request = sqlExecutor.getSqlGenerator().renderQuery(definition, sqlExecutor.getDbType());
         SqlRequest countRequest = sqlExecutor.getSqlGenerator().rewriteCount(definition, sqlExecutor.getDbType());
-        SqlExecutionContext context = new SqlExecutionContext(
-                sqlExecutor,
-                QueryWrapper.class.getName(),
-                "page",
-                SqlCommandType.SELECT,
-                resultType,
-                paging,
-                countRequest,
-                true
-        );
+        SqlExecutionContext context = SqlExecutionContext.builder(SqlCommandType.SELECT)
+                .sqlExecutor(sqlExecutor)
+                .mapper(QueryWrapper.class, "page")
+                .resultType(resultType)
+                .paging(paging)
+                .countRequest(countRequest)
+                .build();
         return sqlExecutor.getSqlPagingSupport().page(sqlExecutor, context, request.sql(), request.args(), paging, resultType);
     }
 

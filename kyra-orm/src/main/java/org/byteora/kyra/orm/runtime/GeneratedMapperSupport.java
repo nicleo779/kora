@@ -22,18 +22,18 @@ public final class GeneratedMapperSupport {
     }
 
     public static <T> T selectOne(SqlExecutor sqlExecutor,
-                                  String mapperClassName,
+                                  Class<?> mapperType,
                                   String statementId,
                                   AnnotationMeta[] mapperMethodAnnotations,
                                   DynamicSqlNode sqlNode,
                                   String[] parameterNames,
                                   Object[] parameterValues,
                                   Class<T> resultType) {
-        return selectOne(sqlExecutor, mapperClassName, statementId, mapperMethodAnnotations, sqlNode, parameterNames, parameterValues, (Type) resultType);
+        return selectOne(sqlExecutor, mapperType, statementId, mapperMethodAnnotations, sqlNode, parameterNames, parameterValues, (Type) resultType);
     }
 
     public static <T> T selectOne(SqlExecutor sqlExecutor,
-                                  String mapperClassName,
+                                  Class<?> mapperType,
                                   String statementId,
                                   AnnotationMeta[] mapperMethodAnnotations,
                                   DynamicSqlNode sqlNode,
@@ -43,34 +43,28 @@ public final class GeneratedMapperSupport {
         Map<String, Object> params = MapperParameters.build(parameterNames, parameterValues);
         BoundSql boundSql = DynamicSqlRenderer.render(sqlNode, params);
         Class<T> resultClass = rawClass(resultType);
-        SqlExecutionContext context = new SqlExecutionContext(
-                sqlExecutor,
-                mapperClassName,
-                statementId,
-                SqlCommandType.SELECT,
-                resultClass,
-                resultType,
-                null,
-                null,
-                mapperMethodAnnotations,
-                true
-        );
+        SqlExecutionContext context = SqlExecutionContext.builder(SqlCommandType.SELECT)
+                .sqlExecutor(sqlExecutor)
+                .mapper(mapperType, statementId)
+                .resultType(resultClass, resultType)
+                .annotations(mapperMethodAnnotations)
+                .build();
         return sqlExecutor.selectOne(boundSql.getSql(), DynamicSqlArgumentResolver.resolve(boundSql), context, resultClass);
     }
 
     public static <T> List<T> selectList(SqlExecutor sqlExecutor,
-                                         String mapperClassName,
+                                         Class<?> mapperType,
                                          String statementId,
                                          AnnotationMeta[] mapperMethodAnnotations,
                                          DynamicSqlNode sqlNode,
                                          String[] parameterNames,
                                          Object[] parameterValues,
                                          Class<T> resultType) {
-        return selectList(sqlExecutor, mapperClassName, statementId, mapperMethodAnnotations, sqlNode, parameterNames, parameterValues, (Type) resultType);
+        return selectList(sqlExecutor, mapperType, statementId, mapperMethodAnnotations, sqlNode, parameterNames, parameterValues, (Type) resultType);
     }
 
     public static <T> List<T> selectList(SqlExecutor sqlExecutor,
-                                         String mapperClassName,
+                                         Class<?> mapperType,
                                          String statementId,
                                          AnnotationMeta[] mapperMethodAnnotations,
                                          DynamicSqlNode sqlNode,
@@ -80,23 +74,17 @@ public final class GeneratedMapperSupport {
         Map<String, Object> params = MapperParameters.build(parameterNames, parameterValues);
         BoundSql boundSql = DynamicSqlRenderer.render(sqlNode, params);
         Class<T> resultClass = rawClass(resultType);
-        SqlExecutionContext context = new SqlExecutionContext(
-                sqlExecutor,
-                mapperClassName,
-                statementId,
-                SqlCommandType.SELECT,
-                resultClass,
-                resultType,
-                null,
-                null,
-                mapperMethodAnnotations,
-                true
-        );
+        SqlExecutionContext context = SqlExecutionContext.builder(SqlCommandType.SELECT)
+                .sqlExecutor(sqlExecutor)
+                .mapper(mapperType, statementId)
+                .resultType(resultClass, resultType)
+                .annotations(mapperMethodAnnotations)
+                .build();
         return sqlExecutor.selectList(boundSql.getSql(), DynamicSqlArgumentResolver.resolve(boundSql), context, resultClass);
     }
 
     public static <T> Page<T> selectPage(SqlExecutor sqlExecutor,
-                                         String mapperClassName,
+                                         Class<?> mapperType,
                                          String statementId,
                                          AnnotationMeta[] mapperMethodAnnotations,
                                          DynamicSqlNode sqlNode,
@@ -104,11 +92,11 @@ public final class GeneratedMapperSupport {
                                          Object[] parameterValues,
                                          Paging paging,
                                          Class<T> resultType) {
-        return selectPage(sqlExecutor, mapperClassName, statementId, mapperMethodAnnotations, sqlNode, parameterNames, parameterValues, paging, (Type) resultType);
+        return selectPage(sqlExecutor, mapperType, statementId, mapperMethodAnnotations, sqlNode, parameterNames, parameterValues, paging, (Type) resultType);
     }
 
     public static <T> Page<T> selectPage(SqlExecutor sqlExecutor,
-                                         String mapperClassName,
+                                         Class<?> mapperType,
                                          String statementId,
                                          AnnotationMeta[] mapperMethodAnnotations,
                                          DynamicSqlNode sqlNode,
@@ -119,18 +107,13 @@ public final class GeneratedMapperSupport {
         Map<String, Object> params = MapperParameters.build(parameterNames, parameterValues);
         BoundSql boundSql = DynamicSqlRenderer.render(sqlNode, params);
         Class<T> resultClass = rawClass(resultType);
-        SqlExecutionContext context = new SqlExecutionContext(
-                sqlExecutor,
-                mapperClassName,
-                statementId,
-                SqlCommandType.SELECT,
-                resultClass,
-                resultType,
-                paging,
-                null,
-                mapperMethodAnnotations,
-                true
-        );
+        SqlExecutionContext context = SqlExecutionContext.builder(SqlCommandType.SELECT)
+                .sqlExecutor(sqlExecutor)
+                .mapper(mapperType, statementId)
+                .resultType(resultClass, resultType)
+                .paging(paging)
+                .annotations(mapperMethodAnnotations)
+                .build();
         return sqlExecutor.getSqlPagingSupport().page(
                 sqlExecutor,
                 context,
@@ -142,7 +125,7 @@ public final class GeneratedMapperSupport {
     }
 
     public static int update(SqlExecutor sqlExecutor,
-                             String mapperClassName,
+                             Class<?> mapperType,
                              String statementId,
                              AnnotationMeta[] mapperMethodAnnotations,
                              SqlCommandType commandType,
@@ -151,17 +134,11 @@ public final class GeneratedMapperSupport {
                              Object[] parameterValues) {
         Map<String, Object> params = MapperParameters.build(parameterNames, parameterValues);
         BoundSql boundSql = DynamicSqlRenderer.render(sqlNode, params);
-        SqlExecutionContext context = new SqlExecutionContext(
-                sqlExecutor,
-                mapperClassName,
-                statementId,
-                commandType,
-                null,
-                null,
-                null,
-                mapperMethodAnnotations,
-                true
-        );
+        SqlExecutionContext context = SqlExecutionContext.builder(commandType)
+                .sqlExecutor(sqlExecutor)
+                .mapper(mapperType, statementId)
+                .annotations(mapperMethodAnnotations)
+                .build();
         return sqlExecutor.update(boundSql.getSql(), DynamicSqlArgumentResolver.resolve(boundSql), context);
     }
 
