@@ -8,7 +8,8 @@ public final class MapperParameters {
     }
 
     public static Map<String, Object> build(String[] names, Object[] values) {
-        Map<String, Object> parameters = new LinkedHashMap<>();
+        int expectedEntries = names.length * 3 + 4;
+        Map<String, Object> parameters = new LinkedHashMap<>((int) (expectedEntries / 0.75f) + 1);
         if (names.length == 1) {
             Object only = values[0];
             parameters.put("_parameter", only);

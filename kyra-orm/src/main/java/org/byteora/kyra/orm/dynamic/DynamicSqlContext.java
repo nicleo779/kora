@@ -6,8 +6,17 @@ import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class DynamicSqlContext {
+    /**
+     * Caches the dotted-path split of binding expressions (e.g. {@code "query.minAge"} →
+     * {@code ["query", "minAge"]}). Expressions come from the (compile-time) SQL templates, so the
+     * key space is bounded by the number of statements. The returned arrays are treated as read-only
+     * by all callers, so sharing a single instance per expression is safe.
+     */
+    private static final Map<String, String[]> PATH_CACHE = new ConcurrentHashMap<>();
+
     private final Map<String, Object> bindings;
     private final Deque<Scope> scopes = new ArrayDeque<>();
     private int uniqueNumber;
@@ -91,6 +100,10 @@ public final class DynamicSqlContext {
     }
 
     static String[] splitPath(String expression) {
+        return PATH_CACHE.computeIfAbsent(expression, DynamicSqlContext::computeSplitPath);
+    }
+
+    private static String[] computeSplitPath(String expression) {
         int dot = expression.indexOf('.');
         if (dot < 0) {
             return new String[]{expression};

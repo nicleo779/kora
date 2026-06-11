@@ -20,6 +20,21 @@ public final class BoundSql {
         this.values = Collections.unmodifiableMap(new LinkedHashMap<>(values));
     }
 
+    private BoundSql(String sql, List<String> bindings, Map<String, Object> values, boolean trusted) {
+        this.sql = sql;
+        this.bindings = bindings;
+        this.values = values;
+    }
+
+    /**
+     * Adopts the given {@code bindings} and {@code values} without defensive copying. Intended for the
+     * internal render hot path, where both arguments are freshly built per call and only read
+     * afterwards. Callers MUST NOT mutate either argument after handing it over.
+     */
+    public static BoundSql ofTrusted(String sql, List<String> bindings, Map<String, Object> values) {
+        return new BoundSql(sql, bindings, values, true);
+    }
+
     public String getSql() {
         return sql;
     }
