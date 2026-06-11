@@ -164,6 +164,36 @@ public class DynamicSqlRendererTest {
         assertArrayEquals(new Object[]{"%Keanu%"}, DynamicSqlArgumentResolver.resolve(bindSql));
     }
 
+    @Test
+    void staticStatementShouldResolveFreshValuesPerCall() {
+        DynamicSqlNode root = SqlNodes.mixed(
+                SqlNodes.text("select * from user where id = #{id}")
+        );
+
+        BoundSql first = DynamicSqlRenderer.render(root, MapperParameters.build(new String[]{"id"}, new Object[]{1L}));
+        BoundSql second = DynamicSqlRenderer.render(root, MapperParameters.build(new String[]{"id"}, new Object[]{2L}));
+
+        assertEquals("select * from user where id = ?", first.getSql());
+        assertEquals("select * from user where id = ?", second.getSql());
+        assertArrayEquals(new Object[]{1L}, DynamicSqlArgumentResolver.resolve(first));
+        assertArrayEquals(new Object[]{2L}, DynamicSqlArgumentResolver.resolve(second));
+    }
+
+    @Test
+    void dollarPlaceholderShouldStillBeSubstitutedInline() {
+        DynamicSqlNode root = SqlNodes.mixed(
+                SqlNodes.text("select * from ${table} where id = #{id}")
+        );
+
+        BoundSql boundSql = DynamicSqlRenderer.render(root, MapperParameters.build(
+                new String[]{"table", "id"},
+                new Object[]{"user", 9L}
+        ));
+
+        assertEquals("select * from user where id = ?", boundSql.getSql());
+        assertArrayEquals(new Object[]{9L}, DynamicSqlArgumentResolver.resolve(boundSql));
+    }
+
     @Reflect
     public static final class User {
         private final String name;

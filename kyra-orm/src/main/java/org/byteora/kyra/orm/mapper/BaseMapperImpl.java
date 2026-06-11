@@ -50,7 +50,7 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
                 new WhereDefinition(Conditions.eq(entityTable.idColumn(), id), List.of(), null, null)
         );
         SqlRequest request = sqlExecutor.getSqlGenerator().renderQuery(queryDefinition, sqlExecutor.getDbType());
-        return sqlExecutor.selectOne(request.getSql(), request.getArgs(), entityClass);
+        return sqlExecutor.selectOne(request.sql(), request.args(), entityClass);
     }
 
     @Override
@@ -68,20 +68,20 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
                 new WhereDefinition(Conditions.in(entityTable.idColumn(), ids), List.of(), null, null)
         );
         SqlRequest request = sqlExecutor.getSqlGenerator().renderQuery(queryDefinition, sqlExecutor.getDbType());
-        return sqlExecutor.selectList(request.getSql(), request.getArgs(), entityClass);
+        return sqlExecutor.selectList(request.sql(), request.args(), entityClass);
     }
 
     @Override
     public List<T> selectList(WhereWrapper query) {
         if (query == null) query = new WhereWrapper();
         SqlRequest request = sqlExecutor.getSqlGenerator().renderSelect(entityTable, query.toDefinition(), sqlExecutor.getDbType());
-        return sqlExecutor.selectList(request.getSql(), request.getArgs(), entityClass);
+        return sqlExecutor.selectList(request.sql(), request.args(), entityClass);
     }
 
     @Override
     public T selectOne(WhereWrapper query) {
         SqlRequest request = sqlExecutor.getSqlGenerator().renderSelect(entityTable, query.toDefinition(), sqlExecutor.getDbType());
-        return sqlExecutor.selectOne(request.getSql(), request.getArgs(), entityClass);
+        return sqlExecutor.selectOne(request.sql(), request.args(), entityClass);
     }
 
     @Override
@@ -111,7 +111,7 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
                 countRequest,
                 true
         );
-        return sqlExecutor.getSqlPagingSupport().count(sqlExecutor, context, request.getSql(), request.getArgs());
+        return sqlExecutor.getSqlPagingSupport().count(sqlExecutor, context, request.sql(), request.args());
     }
 
     @Override
@@ -141,7 +141,7 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
                 countRequest,
                 true
         );
-        return sqlExecutor.getSqlPagingSupport().page(sqlExecutor, context, request.getSql(), request.getArgs(), paging, entityClass);
+        return sqlExecutor.getSqlPagingSupport().page(sqlExecutor, context, request.sql(), request.args(), paging, entityClass);
     }
 
     @Override
@@ -198,13 +198,13 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
     @Override
     public int delete(WhereWrapper query) {
         SqlRequest request = sqlExecutor.getSqlGenerator().renderDelete(entityTable, query.toDefinition(), sqlExecutor.getDbType());
-        return sqlExecutor.update(request.getSql(), request.getArgs());
+        return sqlExecutor.update(request.sql(), request.args());
     }
 
     @Override
     public int update(UpdateWrapper updateWrapper) {
         SqlRequest request = sqlExecutor.getSqlGenerator().renderUpdate(entityTable, updateWrapper.toDefinition(), sqlExecutor.getDbType());
-        return sqlExecutor.update(request.getSql(), request.getArgs());
+        return sqlExecutor.update(request.sql(), request.args());
     }
 
     @Override
@@ -214,7 +214,7 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
                 new WhereDefinition(Conditions.eq(entityTable.idColumn(), id), List.of(), null, null),
                 sqlExecutor.getDbType()
         );
-        return sqlExecutor.update(request.getSql(), request.getArgs());
+        return sqlExecutor.update(request.sql(), request.args());
     }
 
     @Override
@@ -227,7 +227,7 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
                 new WhereDefinition(Conditions.in(entityTable.idColumn(), ids), List.of(), null, null),
                 sqlExecutor.getDbType()
         );
-        return sqlExecutor.update(request.getSql(), request.getArgs());
+        return sqlExecutor.update(request.sql(), request.args());
     }
 
     private boolean isIdField(String field) {
@@ -270,7 +270,7 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
             throw new SqlExecutorException("Insert requires at least one non-null field: " + entityClass.getName());
         }
         SqlRequest request = sqlExecutor.getSqlGenerator().renderInsert(entityTable, columns, args, sqlExecutor.getDbType());
-        return new InsertSpec(request.getSql(), request.getArgs(), assignGeneratedId);
+        return new InsertSpec(request.sql(), request.args(), assignGeneratedId);
     }
 
     private boolean appendInsertId(T entity, Reflector<T> reflector, int idFieldIndex, List<String> columns, List<Object> args) {
@@ -333,7 +333,7 @@ public class BaseMapperImpl<T> extends AbstractMapper<T> implements BaseMapper<T
                 ),
                 sqlExecutor.getDbType()
         );
-        return new UpdateByIdSpec(request.getSql(), request.getArgs());
+        return new UpdateByIdSpec(request.sql(), request.args());
     }
 
     private int executeGroupedBatch(Map<String, List<Object[]>> batchGroups) {

@@ -27,8 +27,8 @@ class UpdateWrapperTest {
 
         assertEquals(
                 "update users set name = IF(age >= ?, ?, ?) WHERE id = ?",
-                request.getSql());
-        assertArrayEquals(new Object[]{18, "adult", "minor", 1L}, request.getArgs());
+                request.sql());
+        assertArrayEquals(new Object[]{18, "adult", "minor", 1L}, request.args());
     }
 
     @Test
@@ -42,8 +42,8 @@ class UpdateWrapperTest {
 
         assertEquals(
                 "update users set name = ? WHERE id = ?",
-                request.getSql());
-        assertArrayEquals(new Object[]{null, 1L}, request.getArgs());
+                request.sql());
+        assertArrayEquals(new Object[]{null, 1L}, request.args());
     }
 
     private static final class TestUser {

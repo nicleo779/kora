@@ -2,20 +2,14 @@ package org.byteora.kyra.orm.runtime;
 
 import java.util.Arrays;
 
-public final class SqlRequest {
-    private final String sql;
-    private final Object[] args;
-
+public record SqlRequest(String sql, Object[] args) {
     public SqlRequest(String sql, Object[] args) {
         this.sql = sql;
         this.args = args == null ? new Object[0] : args.clone();
     }
 
-    public String getSql() {
-        return sql;
-    }
-
-    public Object[] getArgs() {
+    @Override
+    public Object[] args() {
         return args.clone();
     }
 

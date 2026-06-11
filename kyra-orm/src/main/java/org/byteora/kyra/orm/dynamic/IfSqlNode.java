@@ -2,10 +2,12 @@ package org.byteora.kyra.orm.dynamic;
 
 public final class IfSqlNode implements DynamicSqlNode {
     private final String test;
+    private final CompiledExpression compiledTest;
     private final DynamicSqlNode contents;
 
     public IfSqlNode(String test, DynamicSqlNode contents) {
         this.test = test;
+        this.compiledTest = ExpressionEvaluator.compile(test);
         this.contents = contents;
     }
 
@@ -19,6 +21,6 @@ public final class IfSqlNode implements DynamicSqlNode {
 
     @Override
     public String render(DynamicSqlContext context) {
-        return context.evaluateBoolean(test) ? contents.render(context) : "";
+        return context.evaluateBoolean(compiledTest) ? contents.render(context) : "";
     }
 }

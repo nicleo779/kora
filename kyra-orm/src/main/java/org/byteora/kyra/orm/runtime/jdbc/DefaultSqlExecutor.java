@@ -107,7 +107,7 @@ public class DefaultSqlExecutor implements SqlExecutor {
     @Override
     public <T> List<T> selectList(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
         SqlRequest request = applyInterceptors(context, new SqlRequest(sql, args));
-        return executeQuery(request.getSql(), request.getArgs(), context, createRowMapper(resultType, genericResultType(context, resultType)));
+        return executeQuery(request.sql(), request.args(), context, createRowMapper(resultType, genericResultType(context, resultType)));
     }
 
     @Override
@@ -162,15 +162,15 @@ public class DefaultSqlExecutor implements SqlExecutor {
     public int update(String sql, Object[] args, SqlExecutionContext context) {
         SqlRequest request = applyInterceptors(context, new SqlRequest(sql, args));
         try (var connection = openConnection()) {
-            try (PreparedStatement statement = connection.prepareStatement(request.getSql())) {
-                Object[] boundArgs = bindParameters(statement, request.getArgs());
+            try (PreparedStatement statement = connection.prepareStatement(request.sql())) {
+                bindParameters(statement, request.args());
                 int updated = statement.executeUpdate();
-                logSqlSuccess(context, request.getSql(), boundArgs, null, updated);
+                logSqlSuccess(context, request.sql(), request.args(), null, updated);
                 return updated;
             }
         } catch (SQLException ex) {
-            logSqlError(context, request.getSql(), request.getArgs(), null, ex);
-            throw new SqlExecutorException("Failed to execute update: " + request.getSql(), ex);
+            logSqlError(context, request.sql(), request.args(), null, ex);
+            throw new SqlExecutorException("Failed to execute update: " + request.sql(), ex);
         }
     }
 
@@ -182,10 +182,10 @@ public class DefaultSqlExecutor implements SqlExecutor {
     public <T> T updateAndReturnGeneratedKey(String sql, Object[] args, SqlExecutionContext context, Class<T> resultType) {
         SqlRequest request = applyInterceptors(context, new SqlRequest(sql, args));
         try (var connection = openConnection()) {
-            try (PreparedStatement statement = connection.prepareStatement(request.getSql(), Statement.RETURN_GENERATED_KEYS)) {
-                Object[] boundArgs = bindParameters(statement, request.getArgs());
+            try (PreparedStatement statement = connection.prepareStatement(request.sql(), Statement.RETURN_GENERATED_KEYS)) {
+                bindParameters(statement, request.args());
                 int updated = statement.executeUpdate();
-                logSqlSuccess(context, request.getSql(), boundArgs, null, updated);
+                logSqlSuccess(context, request.sql(), request.args(), null, updated);
                 if (updated < 1) {
                     return null;
                 }
@@ -197,8 +197,8 @@ public class DefaultSqlExecutor implements SqlExecutor {
             }
             return null;
         } catch (SQLException ex) {
-            logSqlError(context, request.getSql(), request.getArgs(), null, ex);
-            throw new SqlExecutorException("Failed to execute update with generated key: " + request.getSql(), ex);
+            logSqlError(context, request.sql(), request.args(), null, ex);
+            throw new SqlExecutorException("Failed to execute update with generated key: " + request.sql(), ex);
         }
     }
 
@@ -214,18 +214,18 @@ public class DefaultSqlExecutor implements SqlExecutor {
         }
         SqlRequest request = applyInterceptors(context, new SqlRequest(sql, new Object[0]));
         try (var connection = openConnection()) {
-            try (PreparedStatement statement = connection.prepareStatement(request.getSql())) {
+            try (PreparedStatement statement = connection.prepareStatement(request.sql())) {
                 for (Object[] args : batchArgs) {
                     bindParameters(statement, args);
                     statement.addBatch();
                 }
                 int[] rows = statement.executeBatch();
-                logSqlSuccess(context, request.getSql(), null, batchArgs, batchRows(rows));
+                logSqlSuccess(context, request.sql(), null, batchArgs, batchRows(rows));
                 return rows;
             }
         } catch (SQLException ex) {
-            logSqlError(context, request.getSql(), null, batchArgs, ex);
-            throw new SqlExecutorException("Failed to execute batch: " + request.getSql(), ex);
+            logSqlError(context, request.sql(), null, batchArgs, ex);
+            throw new SqlExecutorException("Failed to execute batch: " + request.sql(), ex);
         }
     }
 
@@ -237,13 +237,13 @@ public class DefaultSqlExecutor implements SqlExecutor {
     private <T> List<T> executeQuery(String sql, Object[] args, SqlExecutionContext context, RowMapper<T> rowMapper) {
         try (var connection = openConnection()) {
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
-                Object[] boundArgs = bindParameters(statement, args);
+                 bindParameters(statement, args);
                 try (ResultSet resultSet = statement.executeQuery()) {
                     var results = new ArrayList<T>();
                     while (resultSet.next()) {
                         results.add(rowMapper.mapRow(resultSet));
                     }
-                    logSqlSuccess(context, sql, boundArgs, null, results.size());
+                    logSqlSuccess(context, sql, args, null, results.size());
                     return results;
                 }
             }
@@ -441,17 +441,14 @@ public class DefaultSqlExecutor implements SqlExecutor {
         return current;
     }
 
-    private Object[] bindParameters(PreparedStatement statement, Object[] args) throws SQLException {
+    private void bindParameters(PreparedStatement statement, Object[] args) throws SQLException {
         if (args == null || args.length == 0) {
-            return new Object[0];
+            return;
         }
-        Object[] boundArgs = new Object[args.length];
         for (int i = 0; i < args.length; i++) {
-            Object boundValue = typeConverter.fieldToColumn(args[i]);
-            boundArgs[i] = boundValue;
-            statement.setObject(i + 1, boundValue);
+            args[i] = typeConverter.fieldToColumn(args[i]);
+            statement.setObject(i + 1, args[i]);
         }
-        return boundArgs;
     }
 
     private DbType inferDbType(Connection connection) {

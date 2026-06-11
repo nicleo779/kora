@@ -9,8 +9,9 @@ final class ExpressionEvaluator {
     private ExpressionEvaluator() {
     }
 
-    static Object evaluate(String expression, DynamicSqlContext context) {
-        return new Parser(tokenize(expression), context).parseExpression();
+    static CompiledExpression compile(String expression) {
+        Parser parser = new Parser(tokenize(expression));
+        return parser.parseExpression();
     }
 
     static boolean toBoolean(Object value) {
@@ -30,6 +31,46 @@ final class ExpressionEvaluator {
             return iterable.iterator().hasNext();
         }
         return true;
+    }
+
+    private static boolean equalsValue(Object left, Object right) {
+        if (left instanceof Number leftNumber && right instanceof Number rightNumber) {
+            return Double.compare(leftNumber.doubleValue(), rightNumber.doubleValue()) == 0;
+        }
+        return Objects.equals(left, right);
+    }
+
+    private static boolean compare(Object left, Object right, String operator) {
+        if (left == null || right == null) {
+            return false;
+        }
+        int value;
+        if (left instanceof Number leftNumber && right instanceof Number rightNumber) {
+            value = Double.compare(leftNumber.doubleValue(), rightNumber.doubleValue());
+        } else if (left instanceof Comparable<?> comparable && left.getClass().isInstance(right)) {
+            @SuppressWarnings("unchecked")
+            Comparable<Object> cast = (Comparable<Object>) comparable;
+            value = cast.compareTo(right);
+        } else {
+            value = String.valueOf(left).compareTo(String.valueOf(right));
+        }
+        return switch (operator) {
+            case ">" -> value > 0;
+            case ">=" -> value >= 0;
+            case "<" -> value < 0;
+            case "<=" -> value <= 0;
+            default -> throw new IllegalStateException("Unexpected operator: " + operator);
+        };
+    }
+
+    private static Object additive(Object left, Object right) {
+        if (left instanceof String || right instanceof String) {
+            return String.valueOf(left) + String.valueOf(right);
+        }
+        if (left instanceof Number leftNumber && right instanceof Number rightNumber) {
+            return leftNumber.doubleValue() + rightNumber.doubleValue();
+        }
+        return String.valueOf(left) + right;
     }
 
     private static List<Token> tokenize(String expression) {
@@ -125,140 +166,103 @@ final class ExpressionEvaluator {
 
     private static final class Parser {
         private final List<Token> tokens;
-        private final DynamicSqlContext context;
         private int index;
 
-        private Parser(List<Token> tokens, DynamicSqlContext context) {
+        private Parser(List<Token> tokens) {
             this.tokens = tokens;
-            this.context = context;
         }
 
-        private Object parseExpression() {
-            Object value = parseOr();
+        private CompiledExpression parseExpression() {
+            CompiledExpression value = parseOr();
             expect("eof");
             return value;
         }
 
-        private Object parseOr() {
-            Object left = parseAnd();
+        private CompiledExpression parseOr() {
+            CompiledExpression left = parseAnd();
             while (match("or")) {
-                Object right = parseAnd();
-                left = toBoolean(left) || toBoolean(right);
+                CompiledExpression right = parseAnd();
+                left = new OrExpr(left, right);
             }
             return left;
         }
 
-        private Object parseAnd() {
-            Object left = parseEquality();
+        private CompiledExpression parseAnd() {
+            CompiledExpression left = parseEquality();
             while (match("and")) {
-                Object right = parseEquality();
-                left = toBoolean(left) && toBoolean(right);
+                CompiledExpression right = parseEquality();
+                left = new AndExpr(left, right);
             }
             return left;
         }
 
-        private Object parseEquality() {
-            Object left = parseComparison();
+        private CompiledExpression parseEquality() {
+            CompiledExpression left = parseComparison();
             while (peekType("op") && ("==".equals(peek().value) || "!=".equals(peek().value))) {
                 String operator = advance().value;
-                Object right = parseComparison();
-                boolean result = equalsValue(left, right);
-                left = "==".equals(operator) ? result : !result;
+                CompiledExpression right = parseComparison();
+                left = new EqualityExpr(left, right, "!=".equals(operator));
             }
             return left;
         }
 
-        private Object parseComparison() {
-            Object left = parseAdditive();
+        private CompiledExpression parseComparison() {
+            CompiledExpression left = parseAdditive();
             while (peekType("op") && (">".equals(peek().value) || ">=".equals(peek().value) || "<".equals(peek().value) || "<=".equals(peek().value))) {
                 String operator = advance().value;
-                Object right = parseAdditive();
-                left = compare(left, right, operator);
+                CompiledExpression right = parseAdditive();
+                left = new ComparisonExpr(left, right, operator);
             }
             return left;
         }
 
-        private Object parseAdditive() {
-            Object left = parseUnary();
+        private CompiledExpression parseAdditive() {
+            CompiledExpression left = parseUnary();
             while (match("+")) {
-                Object right = parseUnary();
-                if (left instanceof String || right instanceof String) {
-                    left = String.valueOf(left) + String.valueOf(right);
-                } else if (left instanceof Number leftNumber && right instanceof Number rightNumber) {
-                    left = leftNumber.doubleValue() + rightNumber.doubleValue();
-                } else {
-                    left = String.valueOf(left) + right;
-                }
+                CompiledExpression right = parseUnary();
+                left = new AdditiveExpr(left, right);
             }
             return left;
         }
 
-        private Object parseUnary() {
+        private CompiledExpression parseUnary() {
             if (match("!") || match("not")) {
-                return !toBoolean(parseUnary());
+                return new NotExpr(parseUnary());
             }
             return parsePrimary();
         }
 
-        private Object parsePrimary() {
+        private CompiledExpression parsePrimary() {
             if (match("(")) {
-                Object value = parseOr();
+                CompiledExpression value = parseOr();
                 expect(")");
                 return value;
             }
             Token token = advance();
             return switch (token.type) {
-                case "string" -> token.value;
-                case "number" -> token.value.contains(".") ? Double.parseDouble(token.value) : Long.parseLong(token.value);
+                case "string" -> new LiteralExpr(token.value);
+                case "number" -> new LiteralExpr(token.value.contains(".")
+                        ? Double.parseDouble(token.value)
+                        : Long.parseLong(token.value));
                 case "literal" -> switch (token.value) {
-                    case "null" -> null;
-                    case "true" -> true;
-                    case "false" -> false;
+                    case "null" -> new LiteralExpr(null);
+                    case "true" -> new LiteralExpr(Boolean.TRUE);
+                    case "false" -> new LiteralExpr(Boolean.FALSE);
                     default -> throw new IllegalStateException("Unexpected literal: " + token.value);
                 };
                 case "identifier" -> {
                     if (match("(")) {
                         if (match(")")) {
-                            yield context.resolveValue(token.value + "()");
+                            yield new ZeroArgFunctionExpr(token.value);
                         }
-                        Object argument = parseOr();
+                        CompiledExpression argument = parseOr();
                         expect(")");
-                        yield context.resolveFunction(token.value, argument);
+                        yield new OneArgFunctionExpr(token.value, argument);
                     }
-                    yield context.resolveValue(token.value);
+                    yield new IdentifierExpr(token.value);
                 }
                 default -> throw new IllegalArgumentException("Unexpected token '" + token.value + "' in expression");
             };
-        }
-
-        private boolean compare(Object left, Object right, String operator) {
-            if (left == null || right == null) {
-                return false;
-            }
-            int value;
-            if (left instanceof Number leftNumber && right instanceof Number rightNumber) {
-                value = Double.compare(leftNumber.doubleValue(), rightNumber.doubleValue());
-            } else if (left instanceof Comparable<?> comparable && left.getClass().isInstance(right)) {
-                @SuppressWarnings("unchecked")
-                Comparable<Object> cast = (Comparable<Object>) comparable;
-                value = cast.compareTo(right);
-            } else {
-                value = String.valueOf(left).compareTo(String.valueOf(right));
-            }
-            return switch (operator) {
-                case ">" -> value > 0;
-                case ">=" -> value >= 0;
-                case "<" -> value < 0;
-                case "<=" -> value <= 0;
-                default -> throw new IllegalStateException("Unexpected operator: " + operator);
-            };
-        }
-
-        private boolean equalsValue(Object left, Object right) {
-            if (left instanceof Number leftNumber && right instanceof Number rightNumber) {
-                return Double.compare(leftNumber.doubleValue(), rightNumber.doubleValue()) == 0;
-            }
-            return Objects.equals(left, right);
         }
 
         private boolean match(String typeOrValue) {
@@ -287,6 +291,77 @@ final class ExpressionEvaluator {
 
         private boolean peekType(String type) {
             return type.equals(peek().type);
+        }
+    }
+
+    private record LiteralExpr(Object value) implements CompiledExpression {
+        @Override
+        public Object evaluate(DynamicSqlContext context) {
+            return value;
+        }
+    }
+
+    private record IdentifierExpr(String name) implements CompiledExpression {
+        @Override
+        public Object evaluate(DynamicSqlContext context) {
+            return context.resolveValue(name);
+        }
+    }
+
+    private record ZeroArgFunctionExpr(String name) implements CompiledExpression {
+        @Override
+        public Object evaluate(DynamicSqlContext context) {
+            return context.resolveValue(name + "()");
+        }
+    }
+
+    private record OneArgFunctionExpr(String name, CompiledExpression argument) implements CompiledExpression {
+        @Override
+        public Object evaluate(DynamicSqlContext context) {
+            return context.resolveFunction(name, argument.evaluate(context));
+        }
+    }
+
+    private record NotExpr(CompiledExpression operand) implements CompiledExpression {
+        @Override
+        public Object evaluate(DynamicSqlContext context) {
+            return !toBoolean(operand.evaluate(context));
+        }
+    }
+
+    private record AndExpr(CompiledExpression left, CompiledExpression right) implements CompiledExpression {
+        @Override
+        public Object evaluate(DynamicSqlContext context) {
+            return toBoolean(left.evaluate(context)) && toBoolean(right.evaluate(context));
+        }
+    }
+
+    private record OrExpr(CompiledExpression left, CompiledExpression right) implements CompiledExpression {
+        @Override
+        public Object evaluate(DynamicSqlContext context) {
+            return toBoolean(left.evaluate(context)) || toBoolean(right.evaluate(context));
+        }
+    }
+
+    private record EqualityExpr(CompiledExpression left, CompiledExpression right, boolean negate) implements CompiledExpression {
+        @Override
+        public Object evaluate(DynamicSqlContext context) {
+            boolean result = equalsValue(left.evaluate(context), right.evaluate(context));
+            return negate ? !result : result;
+        }
+    }
+
+    private record ComparisonExpr(CompiledExpression left, CompiledExpression right, String operator) implements CompiledExpression {
+        @Override
+        public Object evaluate(DynamicSqlContext context) {
+            return compare(left.evaluate(context), right.evaluate(context), operator);
+        }
+    }
+
+    private record AdditiveExpr(CompiledExpression left, CompiledExpression right) implements CompiledExpression {
+        @Override
+        public Object evaluate(DynamicSqlContext context) {
+            return additive(left.evaluate(context), right.evaluate(context));
         }
     }
 }

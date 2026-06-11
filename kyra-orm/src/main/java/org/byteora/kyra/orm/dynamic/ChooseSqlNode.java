@@ -22,7 +22,7 @@ public final class ChooseSqlNode implements DynamicSqlNode {
     @Override
     public String render(DynamicSqlContext context) {
         for (WhenSqlNode whenNode : whenNodes) {
-            if (context.evaluateBoolean(whenNode.getTest())) {
+            if (context.evaluateBoolean(whenNode.getCompiledTest())) {
                 return whenNode.getContents().render(context);
             }
         }

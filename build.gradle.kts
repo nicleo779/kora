@@ -31,6 +31,10 @@ subprojects {
         mavenCentral()
     }
 
+    tasks.withType<JavaCompile>().configureEach {
+        options.encoding = "UTF-8"
+    }
+
     if (name == "simple") {
         return@subprojects
     }

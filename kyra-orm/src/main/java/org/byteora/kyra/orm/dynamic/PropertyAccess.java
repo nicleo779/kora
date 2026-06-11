@@ -17,7 +17,7 @@ public final class PropertyAccess {
         if (expression == null || expression.isBlank()) {
             return null;
         }
-        String[] parts = expression.split("\\.");
+        String[] parts = DynamicSqlContext.splitPath(expression);
         String root = parts[0];
         if (bindings.containsKey(root)) {
             return resolvePath(bindings.get(root), parts, 1);

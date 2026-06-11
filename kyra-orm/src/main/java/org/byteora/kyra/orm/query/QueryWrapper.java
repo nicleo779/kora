@@ -168,7 +168,7 @@ public final class QueryWrapper {
         var sqlExecutor = requireSqlExecutor();
         QueryDefinition definition = toDefinition();
         SqlRequest request = sqlExecutor.getSqlGenerator().renderQuery(definition, sqlExecutor.getDbType());
-        return sqlExecutor.selectOne(request.getSql(), request.getArgs(), resultType);
+        return sqlExecutor.selectOne(request.sql(), request.args(), resultType);
 
     }
 
@@ -176,7 +176,7 @@ public final class QueryWrapper {
         var sqlExecutor = requireSqlExecutor();
         QueryDefinition definition = toDefinition();
         SqlRequest request = sqlExecutor.getSqlGenerator().renderQuery(definition, sqlExecutor.getDbType());
-        return sqlExecutor.selectList(request.getSql(), request.getArgs(), resultType);
+        return sqlExecutor.selectList(request.sql(), request.args(), resultType);
     }
 
     public long count() {
@@ -194,7 +194,7 @@ public final class QueryWrapper {
                 countRequest,
                 true
         );
-        return sqlExecutor.getSqlPagingSupport().count(sqlExecutor, context, request.getSql(), request.getArgs());
+        return sqlExecutor.getSqlPagingSupport().count(sqlExecutor, context, request.sql(), request.args());
     }
 
     public <T> Page<T> page(Paging paging, Class<T> resultType) {
@@ -212,7 +212,7 @@ public final class QueryWrapper {
                 countRequest,
                 true
         );
-        return sqlExecutor.getSqlPagingSupport().page(sqlExecutor, context, request.getSql(), request.getArgs(), paging, resultType);
+        return sqlExecutor.getSqlPagingSupport().page(sqlExecutor, context, request.sql(), request.args(), paging, resultType);
     }
 
     private SqlExecutor requireSqlExecutor() {

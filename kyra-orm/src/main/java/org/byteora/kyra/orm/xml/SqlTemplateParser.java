@@ -9,33 +9,53 @@ public final class SqlTemplateParser {
     private SqlTemplateParser() {
     }
 
+    /**
+     * Extracts {@code #{}} placeholders into ordered binding expressions and collapses whitespace in a
+     * single pass. Whitespace runs become one space and the leading/trailing space is trimmed, which
+     * matches the previous {@code replaceAll("\\s+", " ").trim()} step but without recompiling a regex
+     * on every call.
+     */
     public static BoundSql parse(String rawSql) {
-        StringBuilder sql = new StringBuilder();
+        int length = rawSql.length();
+        StringBuilder sql = new StringBuilder(length);
         List<String> bindings = new ArrayList<>();
+        boolean pendingSpace = false;
+        boolean started = false;
         int index = 0;
-        while (index < rawSql.length()) {
-            int start = rawSql.indexOf("#{", index);
-            if (start < 0) {
-                sql.append(rawSql.substring(index));
-                break;
+        while (index < length) {
+            char ch = rawSql.charAt(index);
+            if (ch == '#' && index + 1 < length && rawSql.charAt(index + 1) == '{') {
+                int end = rawSql.indexOf('}', index + 2);
+                if (end < 0) {
+                    throw new XmlParseException("Unclosed placeholder in sql: " + rawSql);
+                }
+                String expression = rawSql.substring(index + 2, end).trim();
+                if (expression.isEmpty()) {
+                    throw new XmlParseException("Empty placeholder in sql: " + rawSql);
+                }
+                if (pendingSpace && started) {
+                    sql.append(' ');
+                }
+                pendingSpace = false;
+                bindings.add(expression);
+                sql.append('?');
+                started = true;
+                index = end + 1;
+                continue;
             }
-            sql.append(rawSql, index, start);
-            int end = rawSql.indexOf('}', start + 2);
-            if (end < 0) {
-                throw new XmlParseException("Unclosed placeholder in sql: " + rawSql);
+            if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\f') {
+                pendingSpace = true;
+                index++;
+                continue;
             }
-            String expression = rawSql.substring(start + 2, end).trim();
-            if (expression.isEmpty()) {
-                throw new XmlParseException("Empty placeholder in sql: " + rawSql);
+            if (pendingSpace && started) {
+                sql.append(' ');
             }
-            bindings.add(expression);
-            sql.append('?');
-            index = end + 1;
+            pendingSpace = false;
+            sql.append(ch);
+            started = true;
+            index++;
         }
-        return new BoundSql(normalizeWhitespace(sql.toString()), bindings);
-    }
-
-    private static String normalizeWhitespace(String sql) {
-        return sql.replaceAll("\\s+", " ").trim();
+        return new BoundSql(sql.toString(), bindings);
     }
 }
