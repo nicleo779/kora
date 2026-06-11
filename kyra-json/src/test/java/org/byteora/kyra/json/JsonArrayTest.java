@@ -2,6 +2,8 @@ package org.byteora.kyra.json;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -85,5 +87,10 @@ public class JsonArrayTest {
     void handlesEmptyArray() {
         assertEquals("[]", mapper.toJson(new int[0]));
         assertArrayEquals(new int[0], mapper.fromJson("[]", int[].class));
+    }
+
+    @Test
+    void serializesHomogeneousIntegerListWithoutTypeRef() {
+        assertEquals("[1,2,3]", mapper.toJson(List.of(1, 2, 3)));
     }
 }
