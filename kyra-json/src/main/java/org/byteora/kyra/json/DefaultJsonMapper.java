@@ -68,8 +68,6 @@ final class DefaultJsonMapper implements JsonMapper {
     private final ThreadLocal<StringBuilderWriter> pooledWriter = ThreadLocal.withInitial(() -> new StringBuilderWriter(512));
     // Same per-thread reuse strategy as pooledWriter, but for the UTF-8 byte sink (toBytes).
     private final ThreadLocal<BytesHolder> pooledBytes = ThreadLocal.withInitial(BytesHolder::new);
-    // Scratch list grown once per thread; returned collections are exact-size copies (no grow during hand-off).
-    private final ThreadLocal<ArrayList<Object>> pooledArrayList = ThreadLocal.withInitial(() -> new ArrayList<>(64));
     private static final ThreadLocal<char[]> NUMBER_CHARS = ThreadLocal.withInitial(() -> new char[24]);
     private static final ConcurrentHashMap<Class<?>, EnumLookup> ENUM_LOOKUPS = new ConcurrentHashMap<>();
 
@@ -282,9 +280,9 @@ final class DefaultJsonMapper implements JsonMapper {
         } else if (value instanceof Long longValue) {
             writeLongNumber(generator, longValue);
         } else if (value instanceof Double doubleValue) {
-            generator.writeNumber(doubleValue.doubleValue());
+            generator.writeNumber(doubleValue);
         } else if (value instanceof Float floatValue) {
-            generator.writeNumber(floatValue.floatValue());
+            generator.writeNumber(floatValue);
         } else if (value instanceof Short shortValue) {
             writeIntNumber(generator, shortValue);
         } else if (value instanceof Byte byteValue) {
@@ -308,18 +306,82 @@ final class DefaultJsonMapper implements JsonMapper {
     }
 
     private void writeArray(JsonGenerator generator, Object value, Type elementType) throws IOException {
+        Class<?> component = value.getClass().getComponentType();
+        if (component != null && component.isPrimitive()) {
+            writePrimitiveArray(generator, value);
+            return;
+        }
+        // Reference arrays: cast to Object[] and index directly instead of going through the
+        // reflective Array.get, which is markedly slower on the hot per-element loop.
         generator.writeStartArray();
-        int length = Array.getLength(value);
-        for (int i = 0; i < length; i++) {
-            writeValue(generator, Array.get(value, i), elementType, Map.of());
+        for (Object element : (Object[]) value) {
+            writeValue(generator, element, elementType, Map.of());
+        }
+        generator.writeEndArray();
+    }
+
+    /**
+     * Serializes a primitive array without boxing each element. The previous reflective
+     * {@code Array.get} path allocated one wrapper per element (e.g. an {@code Integer} per int);
+     * here the values are read straight from the typed array. {@code byte[]}/{@code char[]} keep
+     * their existing semantics (array of numbers / array of single-char strings), not base64.
+     */
+    private void writePrimitiveArray(JsonGenerator generator, Object value) throws IOException {
+        generator.writeStartArray();
+        if (value instanceof int[] array) {
+            for (int element : array) {
+                writeIntNumber(generator, element);
+            }
+        } else if (value instanceof long[] array) {
+            for (long element : array) {
+                writeLongNumber(generator, element);
+            }
+        } else if (value instanceof double[] array) {
+            for (double element : array) {
+                generator.writeNumber(element);
+            }
+        } else if (value instanceof boolean[] array) {
+            for (boolean element : array) {
+                generator.writeBoolean(element);
+            }
+        } else if (value instanceof byte[] array) {
+            for (byte element : array) {
+                writeIntNumber(generator, element);
+            }
+        } else if (value instanceof short[] array) {
+            for (short element : array) {
+                writeIntNumber(generator, element);
+            }
+        } else if (value instanceof float[] array) {
+            for (float element : array) {
+                generator.writeNumber(element);
+            }
+        } else if (value instanceof char[] array) {
+            for (char element : array) {
+                generator.writeString(String.valueOf(element));
+            }
         }
         generator.writeEndArray();
     }
 
     private void writeIterable(JsonGenerator generator, Iterable<?> iterable, Type elementType) throws IOException {
         generator.writeStartArray();
-        for (Object element : iterable) {
-            writeValue(generator, element, elementType, Map.of());
+        // The declared element type is constant across the collection, so classify it once instead of
+        // re-resolving the type and rescanning handlers on every element inside writeValue.
+        Type resolved = Types.resolve(elementType, Map.of());
+        int kind = scalarKind(resolved, Types.rawType(resolved));
+        if (kind == KIND_DELEGATE || kind == KIND_ENUM) {
+            for (Object element : iterable) {
+                writeValue(generator, element, elementType, Map.of());
+            }
+        } else {
+            for (Object element : iterable) {
+                if (element == null) {
+                    generator.writeNull();
+                } else {
+                    writeScalarByKind(generator, element, kind);
+                }
+            }
         }
         generator.writeEndArray();
     }
@@ -414,20 +476,37 @@ final class DefaultJsonMapper implements JsonMapper {
 
     private void writeScalarOrDelegate(JsonGenerator generator, Object fieldValue, ClassPlan plan, int index,
                                        Map<TypeVariable<?>, Type> variables) throws IOException {
-        switch (plan.scalarKinds[index]) {
-            case KIND_STRING -> generator.writeString(fieldValue instanceof String s ? s : String.valueOf(fieldValue));
-            case KIND_BOOLEAN -> generator.writeBoolean((Boolean) fieldValue);
-            case KIND_INT -> writeIntNumber(generator, ((Number) fieldValue).intValue());
-            case KIND_LONG -> writeLongNumber(generator, ((Number) fieldValue).longValue());
-            case KIND_SHORT -> writeIntNumber(generator, ((Number) fieldValue).shortValue());
-            case KIND_BYTE -> writeIntNumber(generator, ((Number) fieldValue).byteValue());
-            case KIND_DOUBLE -> generator.writeNumber(((Number) fieldValue).doubleValue());
-            case KIND_FLOAT -> generator.writeNumber(((Number) fieldValue).floatValue());
-            case KIND_BIG_INTEGER -> generator.writeNumber((BigInteger) fieldValue);
-            case KIND_BIG_DECIMAL -> generator.writeNumber((BigDecimal) fieldValue);
-            case KIND_ENUM -> generator.writeString(plan.enumConstantNames[index][((Enum<?>) fieldValue).ordinal()]);
-            case KIND_STRINGIFY -> generator.writeString(fieldValue.toString());
-            default -> writeValue(generator, fieldValue, plan.fieldTypes[index], variables);
+        int kind = plan.scalarKinds[index];
+        if (kind == KIND_ENUM) {
+            // Field path can use the per-class pre-encoded constant names, indexed by ordinal.
+            generator.writeString(plan.enumConstantNames[index][((Enum<?>) fieldValue).ordinal()]);
+            return;
+        }
+        if (kind == KIND_DELEGATE) {
+            writeValue(generator, fieldValue, plan.fieldTypes[index], variables);
+            return;
+        }
+        writeScalarByKind(generator, fieldValue, kind);
+    }
+
+    /**
+     * Writes a boxed scalar value by its precomputed {@code KIND_*}. Excludes {@code KIND_ENUM}
+     * (handled via per-class pre-encoded names) and {@code KIND_DELEGATE} (generic engine).
+     */
+    private void writeScalarByKind(JsonGenerator generator, Object value, int kind) throws IOException {
+        switch (kind) {
+            case KIND_STRING -> generator.writeString(value instanceof String s ? s : String.valueOf(value));
+            case KIND_BOOLEAN -> generator.writeBoolean((Boolean) value);
+            case KIND_INT -> writeIntNumber(generator, ((Number) value).intValue());
+            case KIND_LONG -> writeLongNumber(generator, ((Number) value).longValue());
+            case KIND_SHORT -> writeIntNumber(generator, ((Number) value).shortValue());
+            case KIND_BYTE -> writeIntNumber(generator, ((Number) value).byteValue());
+            case KIND_DOUBLE -> generator.writeNumber(((Number) value).doubleValue());
+            case KIND_FLOAT -> generator.writeNumber(((Number) value).floatValue());
+            case KIND_BIG_INTEGER -> generator.writeNumber((BigInteger) value);
+            case KIND_BIG_DECIMAL -> generator.writeNumber((BigDecimal) value);
+            case KIND_STRINGIFY -> generator.writeString(value.toString());
+            default -> throw new IllegalStateException("Unsupported scalar kind: " + kind);
         }
     }
 
@@ -698,12 +777,11 @@ final class DefaultJsonMapper implements JsonMapper {
                 yield map;
             }
             case START_ARRAY -> {
-                ArrayList<Object> scratch = pooledArrayList.get();
-                scratch.clear();
+                List<Object> list = new ArrayList<>();
                 while (parser.nextToken() != JsonToken.END_ARRAY) {
-                    scratch.add(readUntyped(parser));
+                    list.add(readUntyped(parser));
                 }
-                yield new ArrayList<>(scratch);
+                yield list;
             }
             case VALUE_STRING -> parser.getValueAsString();
             case VALUE_NUMBER_INT -> parser.getLongValue();
@@ -717,29 +795,116 @@ final class DefaultJsonMapper implements JsonMapper {
 
     private Object readArray(JsonParser parser, Class<?> rawType, Type elementType) throws IOException {
         expect(parser, JsonToken.START_ARRAY);
-        ArrayList<Object> scratch = pooledArrayList.get();
-        scratch.clear();
+        Class<?> componentType = rawType.getComponentType();
+        if (componentType.isPrimitive()) {
+            return readPrimitiveArray(parser, componentType);
+        }
+        // Build directly into a result list (no shared pooled scratch, which would corrupt nested
+        // arrays via reentrancy), then materialize the exact-size typed array.
+        ArrayList<Object> values = new ArrayList<>();
+        readScalarElementsInto(parser, values, elementType);
+        Object[] array = (Object[]) Array.newInstance(componentType, values.size());
+        return values.toArray(array);
+    }
+
+    /**
+     * Reads a primitive array straight into the typed array, growing a primitive buffer instead of
+     * collecting boxed values into a list and unboxing them via {@code Array.set}. Element coercion
+     * and range checks match the per-field primitive path.
+     */
+    private Object readPrimitiveArray(JsonParser parser, Class<?> componentType) throws IOException {
+        if (componentType == int.class) {
+            int[] buffer = new int[16];
+            int size = 0;
+            while (parser.nextToken() != JsonToken.END_ARRAY) {
+                if (size == buffer.length) {
+                    buffer = Arrays.copyOf(buffer, buffer.length << 1);
+                }
+                buffer[size++] = (int) requireRange(readIntegralValue(parser, int.class),
+                        Integer.MIN_VALUE, Integer.MAX_VALUE, int.class);
+            }
+            return Arrays.copyOf(buffer, size);
+        }
+        if (componentType == long.class) {
+            long[] buffer = new long[16];
+            int size = 0;
+            while (parser.nextToken() != JsonToken.END_ARRAY) {
+                if (size == buffer.length) {
+                    buffer = Arrays.copyOf(buffer, buffer.length << 1);
+                }
+                buffer[size++] = readIntegralValue(parser, long.class);
+            }
+            return Arrays.copyOf(buffer, size);
+        }
+        if (componentType == double.class) {
+            double[] buffer = new double[16];
+            int size = 0;
+            while (parser.nextToken() != JsonToken.END_ARRAY) {
+                if (size == buffer.length) {
+                    buffer = Arrays.copyOf(buffer, buffer.length << 1);
+                }
+                buffer[size++] = readFloatingValue(parser, double.class);
+            }
+            return Arrays.copyOf(buffer, size);
+        }
+        // Less common primitive component types (byte/short/float/char/boolean) reuse the boxed path.
+        ArrayList<Object> values = new ArrayList<>();
         int index = 0;
         while (parser.nextToken() != JsonToken.END_ARRAY) {
-            scratch.add(readValueIndex(parser, elementType, Map.of(), index++));
+            values.add(readValueIndex(parser, componentType, Map.of(), index++));
         }
-        Class<?> componentType = rawType.getComponentType();
-        Object array = Array.newInstance(componentType, scratch.size());
-        for (int i = 0; i < scratch.size(); i++) {
-            Array.set(array, i, scratch.get(i));
+        Object array = Array.newInstance(componentType, values.size());
+        for (int i = 0; i < values.size(); i++) {
+            Array.set(array, i, values.get(i));
         }
         return array;
     }
 
     private Collection<?> readCollection(JsonParser parser, Class<?> rawType, Type elementType) throws IOException {
         expect(parser, JsonToken.START_ARRAY);
-        ArrayList<Object> scratch = pooledArrayList.get();
-        scratch.clear();
+        // Build straight into the result collection: avoids the shared pooled scratch (which breaks
+        // nested collections via reentrancy) and the extra scratch->result copy.
+        Collection<Object> result = Set.class.isAssignableFrom(rawType) ? new LinkedHashSet<>() : new ArrayList<>();
+        readScalarElementsInto(parser, result, elementType);
+        return result;
+    }
+
+    /**
+     * Reads array/collection elements into {@code target}. The declared element type is constant, so
+     * classify it once and stream scalar elements straight through the matching coercion instead of
+     * re-resolving the type and rescanning handlers per element via the generic {@code readValue}.
+     */
+    private void readScalarElementsInto(JsonParser parser, Collection<Object> target, Type elementType) throws IOException {
+        Type resolved = Types.resolve(elementType, Map.of());
+        Class<?> elementRaw = Types.rawType(resolved);
+        int kind = scalarKind(resolved, elementRaw);
         int index = 0;
         while (parser.nextToken() != JsonToken.END_ARRAY) {
-            scratch.add(readValueIndex(parser, elementType, Map.of(), index++));
+            if (kind == KIND_DELEGATE) {
+                target.add(readValueIndex(parser, resolved, Map.of(), index));
+            } else {
+                try {
+                    target.add(readScalar(parser, elementRaw, kind));
+                } catch (JsonReadException ex) {
+                    throw ex.prepend("[" + index + "]");
+                }
+            }
+            index++;
         }
-        return Set.class.isAssignableFrom(rawType) ? new LinkedHashSet<>(scratch) : new ArrayList<>(scratch);
+    }
+
+    /**
+     * Reads a single non-delegate scalar element by its precomputed {@code KIND_*}: a JSON null maps
+     * to the type's default, enums resolve by name, everything else goes through {@code readSimpleValue}.
+     */
+    private Object readScalar(JsonParser parser, Class<?> rawType, int kind) {
+        if (parser.currentToken() == JsonToken.VALUE_NULL) {
+            return defaultValue(rawType);
+        }
+        if (kind == KIND_ENUM) {
+            return resolveEnum(rawType, parser.getValueAsString());
+        }
+        return readSimpleValue(parser, rawType);
     }
 
     private Map<String, Object> readMap(JsonParser parser, Type valueType) throws IOException {
@@ -895,18 +1060,12 @@ final class DefaultJsonMapper implements JsonMapper {
      */
     private Object readScalarOrDelegate(JsonParser parser, ClassPlan plan, int index,
                                         Map<TypeVariable<?>, Type> variables, String fieldName) throws IOException {
-        if (plan.scalarKinds[index] == KIND_DELEGATE) {
+        int kind = plan.scalarKinds[index];
+        if (kind == KIND_DELEGATE) {
             return readValueField(parser, plan.fieldTypes[index], variables, fieldName);
         }
-        Class<?> rawType = plan.fieldRawTypes[index];
-        if (parser.currentToken() == JsonToken.VALUE_NULL) {
-            return defaultValue(rawType);
-        }
         try {
-            if (plan.scalarKinds[index] == KIND_ENUM) {
-                return resolveEnum(rawType, parser.getValueAsString());
-            }
-            return readSimpleValue(parser, rawType);
+            return readScalar(parser, plan.fieldRawTypes[index], kind);
         } catch (JsonReadException ex) {
             throw ex.prepend("." + fieldName);
         }
@@ -1289,7 +1448,6 @@ final class DefaultJsonMapper implements JsonMapper {
         return names;
     }
 
-    @SuppressWarnings({"unchecked", "rawtypes"})
     private static Enum<?> resolveEnum(Class<?> rawType, String name) {
         return enumLookup(rawType).resolve(name);
     }
